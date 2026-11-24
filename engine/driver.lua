@@ -1,6 +1,7 @@
 --- Snapshotting LuaLaTeX driver; see docs/engine.md.
 --- Env: `LLP_NATIVE` llpfork.so, `LLP_EVENTS` event FIFO, `LLP_RUN` run dir,
---- `LLP_SHADOW` dir mirroring unsaved editor buffers by absolute path, `LLP_GEN` generation.
+--- `LLP_SHADOW` dir mirroring unsaved editor buffers by absolute path, `LLP_GEN` generation,
+--- `LLP_OUT` its output dir.
 local F = package.loadlib(os.getenv("LLP_NATIVE"), "luaopen_llpfork")()
 local run_dir, shadow = os.getenv("LLP_RUN"), os.getenv("LLP_SHADOW")
 local FINISH_GAP_S = 0.15
@@ -52,7 +53,7 @@ local function encode_max_read()
 end
 
 --- What this process reports once its PDF, SyncTeX and log are closed.
-local exit_msg = "done " .. lfs.currentdir()
+local exit_msg = "done " .. os.getenv("LLP_OUT")
 
 --- Moves this process's outputs to `dir` and makes it report `msg` when they are closed.
 local function become(dir, msg)

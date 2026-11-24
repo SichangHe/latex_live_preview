@@ -32,7 +32,6 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
     LLP_EVENTS: evPath,
     LLP_RUN: runDir,
     LLP_SHADOW: shadow,
-    TEXINPUTS: `${path.dirname(mainTex)}:`,
   };
 
   function tellSnap(pid, cmd) {
@@ -66,10 +65,12 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
       if (!NOT_SEED.has(f)) fs.copyFileSync(path.join(seedDir, f), path.join(dir, f));
     }
     const driver = path.join(ROOT, "engine/driver.lua");
-    const p = spawn("lualatex", [
-      "--shell-escape", "-synctex=-1", "-interaction=nonstopmode", "-jobname=main",
-      `\\directlua{dofile("${driver}")}\\input{${mainTex}}`,
-    ], { cwd: dir, env: { ...env, LLP_GEN: String(gen) }, stdio: "ignore" });
+    const tex = `\\directlua{dofile("${driver}")}\\input{${mainTex}}`;
+    const p = spawn("bash", ["-c", `exec 200<"$LLP_OUT" && exec lualatex --shell-escape -synctex=-1 -interaction=nonstopmode -jobname=main -output-directory=/proc/self/fd/200 "$0"`, tex], {
+      cwd: path.dirname(mainTex),
+      env: { ...env, LLP_GEN: String(gen), LLP_OUT: dir },
+      stdio: "ignore",
+    });
     running = [p.pid];
     log(`gen ${gen}: cold start`);
   }

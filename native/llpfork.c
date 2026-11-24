@@ -57,18 +57,24 @@ static int l_fork(lua_State *L) {
   return 1;
 }
 
-/** Child after resume: chdir to `dir` and give every inherited writable file its own copy
- * there holding the bytes written before the fork, so generations never share output.
- * Names are taken at fork time and the prefix is read through /proc, because the parent may
- * have renamed or deleted the file since. */
+/** TeX runs with `-output-directory=/proc/self/fd/200`, so each process's output directory
+ * is whatever its own fd 200 refers to. */
+#define OUT_DIR_FD 200
+
+/** Child after resume: point fd `OUT_DIR_FD` at `dir` and give every inherited writable file
+ * its own copy there holding the bytes written before the fork, so processes never share
+ * output. Names are taken at fork time and the prefix is read through /proc, because the
+ * parent may have renamed or deleted the file since. */
 static int l_detach(lua_State *L) {
   const char *dir = luaL_checklstring(L, 1, NULL);
   char link[64];
-  if (chdir(dir) != 0) { lua_pushstring(L, "chdir failed"); return 1; }
+  int dfd = open(dir, O_RDONLY | O_DIRECTORY);
+  if (dfd < 0 || dup2(dfd, OUT_DIR_FD) < 0) { lua_pushstring(L, dir); return 1; }
+  close(dfd);
   for (int fd = 3; fd < MAX_FD; fd++) {
     if (fork_offs[fd] < 0) continue;
     snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
-    int in = open(link, O_RDONLY), out = open(fork_names[fd], O_RDWR | O_CREAT | O_TRUNC, 0644);
+    int in = open(link, O_RDONLY), out = openat(OUT_DIR_FD, fork_names[fd], O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (in < 0 || out < 0) { lua_pushstring(L, fork_names[fd]); return 1; }
     off_t o = 0;
     while (o < fork_offs[fd] && sendfile(out, in, &o, fork_offs[fd] - o) > 0) {}
