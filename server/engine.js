@@ -15,6 +15,7 @@ export function seedSig(dir) {
 export const NOT_SEED = new Set(["main.pdf", "main.synctex", "main.log"]);
 /** Each parked snapshot costs ~5 MB; beyond this many, keep every 2nd, 4th, ... page. */
 const MAX_SNAPS = Number(process.env.LLP_MAX_SNAPS ?? 400);
+const WATCHDOG_MS = 3000;
 
 // 🧑 "This also needs to work for very long documents. So you need incremental change support."
 /** Creates an engine for `mainTex` with scratch state under `runDir`.
@@ -39,6 +40,12 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
   const seedOf = new Map();
   /** pids of processes running the current generation */
   let running = [];
+  /** process groups of cold gens; all snapshots, clones and finishers are inside them */
+  const groups = new Set();
+  /** no PDF of a finished gen was delivered since `firstChanged` was last reset */
+  let delivered = true;
+  /** pending resume: if its clone does not report, the snapshot is presumed dead */
+  let watchdog = null;
 
   const env = {
     ...process.env,
@@ -49,9 +56,18 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
   };
 
   function tellSnap(pid, cmd) {
-    const fd = fs.openSync(path.join(runDir, `snap-${pid}`), "r+");
-    fs.writeSync(fd, cmd + "\n");
-    fs.closeSync(fd);
+    try {
+      const fd = fs.openSync(path.join(runDir, `snap-${pid}`), "r+");
+      fs.writeSync(fd, cmd + "\n");
+      fs.closeSync(fd);
+      if (cmd === "quit") fs.rmSync(path.join(runDir, `snap-${pid}`), { force: true });
+    } catch {}
+  }
+
+  /** Pages from the returned one on may differ from what the viewer last got complete. */
+  function markChanged(page) {
+    firstChanged = delivered ? page : Math.min(firstChanged, page);
+    delivered = false;
   }
 
   function killRunning() {
@@ -71,7 +87,8 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
   function cold(seedDir) {
     killRunning();
     gen += 1;
-    firstChanged = 1;
+    markChanged(1);
+    if (!seedDir) stride = 1;
     seedOf.set(gen, seedDir ? seedSig(seedDir) : "");
     const dir = path.join(runDir, `g${gen}`);
     fs.mkdirSync(dir);
@@ -84,7 +101,9 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
       cwd: path.dirname(mainTex),
       env: { ...env, LLP_GEN: String(gen), LLP_OUT: dir },
       stdio: "ignore",
+      detached: true,
     });
+    groups.add(p.pid);
     running = [p.pid];
     log(`gen ${gen}: cold start`);
   }
@@ -100,9 +119,17 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
     }
     killRunning();
     gen += 1;
-    firstChanged = best + 1;
+    markChanged(best + 1);
     seedOf.set(gen, seedOf.get(snaps.get(best).gen));
     tellSnap(snaps.get(best).pid, `go ${gen}`);
+    clearTimeout(watchdog);
+    const g = gen;
+    watchdog = setTimeout(() => {
+      if (gen !== g) return;
+      log(`gen ${g}: snapshot of page ${best} did not resume; cold start`);
+      snaps.delete(best);
+      cold(null);
+    }, WATCHDOG_MS);
     for (const page of stale) dropSnap(page);
     log(`gen ${gen}: resume after page ${best}`);
   }
@@ -119,6 +146,7 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
     const [g, kind, ...rest] = lineStr.split(" ");
     if (Number(g) !== gen) {
       if (kind === "snap") tellSnap(rest[1], "quit");
+      if (kind === "run") try { process.kill(Number(rest[1]), "SIGKILL"); } catch {}
       return;
     }
     switch (kind) {
@@ -140,20 +168,32 @@ export function createEngine({ mainTex, runDir, onPdf, log }) {
         }
         break;
       }
-      case "run": running.push(Number(rest[1])); break;
+      case "run":
+        clearTimeout(watchdog);
+        running.push(Number(rest[1]));
+        break;
       case "partial": onPdf({ gen, kind, firstChanged, dir: rest[1], seed: seedOf.get(gen) }); break;
-      case "done": onPdf({ gen, kind, firstChanged, dir: rest[0], seed: seedOf.get(gen) }); running = []; break;
+      case "done":
+        onPdf({ gen, kind, firstChanged, dir: rest[0], seed: seedOf.get(gen) });
+        delivered = true;
+        running = [];
+        break;
       case "error": log(`gen ${gen} error: ${rest.join(" ")}`); break;
     }
   }
 
   readline.createInterface({ input: fs.createReadStream(null, { fd: evFd }) }).on("line", onEvent);
 
+  /** Kills every process this engine started, directly or by forking. */
   function close() {
-    killRunning();
-    for (const page of [...snaps.keys()]) dropSnap(page);
+    clearTimeout(watchdog);
+    for (const g of groups) try { process.kill(-g, "SIGKILL"); } catch {}
   }
 
-  return { cold, edit, writeShadow, close, gen: () => gen };
+  function dropShadow(file) {
+    fs.rmSync(path.join(shadow, file), { force: true });
+  }
+
+  return { cold, edit, writeShadow, dropShadow, close, gen: () => gen };
 }
 

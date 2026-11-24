@@ -11,7 +11,8 @@ const pagesEl = document.getElementById("pages");
 const statusEl = document.getElementById("status");
 /** kind (`done`|`partial`) -> {gen, url, doc, nPages} */
 const docs = {};
-/** 1-based page -> {el, dirty, gen, size, zoom}; `gen` is the generation it shows; index 0 unused */
+/** 1-based page -> {el, ver, shownVer, gen, url, size, zoom}: dirty while `ver !== shownVer`;
+ * `gen`/`url` are of the PDF it shows; index 0 unused */
 const pages = [null];
 let defaultSize = { w: 612, h: 792 };
 /** `+`/`-` scale pages relative to fitting the window width; `0` resets. */
@@ -42,7 +43,7 @@ function layout() {
     const el = document.createElement("div");
     el.className = "page";
     el.dataset.page = pages.length;
-    pages.push({ el, dirty: true, gen: null, size: null });
+    pages.push({ el, ver: 1, shownVer: 0, gen: null, url: null, size: null });
     pagesEl.append(el);
     observer.observe(el);
   }
@@ -64,15 +65,17 @@ let rendering = Promise.resolve();
 function renderVisible() {
   rendering = rendering.then(async () => {
     const dist = (i) => Math.abs(pages[i].el.getBoundingClientRect().top + pages[i].el.offsetHeight / 2 - innerHeight / 2);
-    for (const i of [...visible].filter((i) => pages[i]?.dirty).sort((a, b) => dist(a) - dist(b))) await renderPage(i);
-  }).catch((e) => console.warn(e));
+    const dirty = [...visible].filter((i) => pages[i] && pages[i].ver !== pages[i].shownVer);
+    for (const i of dirty.sort((a, b) => dist(a) - dist(b))) await renderPage(i).catch((e) => console.warn(e));
+  });
   return rendering;
 }
 
 async function renderPage(i) {
   const src = sourceFor(i);
   const p = pages[i];
-  if (!src || !p?.dirty) return;
+  if (!src || !p || p.ver === p.shownVer) return;
+  const ver = p.ver;
   const page = await src.doc.getPage(i);
   const z = zoom();
   const vp = page.getViewport({ scale: z });
@@ -88,17 +91,25 @@ async function renderPage(i) {
   await new pdfjs.TextLayer({ textContentSource: await page.getTextContent(), container: text, viewport: vp }).render();
   Object.assign(p.el.style, { width: `${vp.width}px`, height: `${vp.height}px` });
   p.el.replaceChildren(canvas, text);
-  p.dirty = false;
+  p.shownVer = ver;
   p.gen = src.gen;
+  p.url = src.url;
   p.zoom = z;
 }
+
+/** Smallest `firstChanged` of PDFs that were dropped since the last one shown. */
+let missedFirst = Infinity;
 
 async function load(msg) {
   const doc = await pdfjs.getDocument({ url: msg.url, isEvalSupported: false, worker }).promise.catch(() => null);
   if (!doc) return;
   const cur = docs[msg.kind];
-  if (cur && cur.gen > msg.gen) return doc.destroy();
-  if (msg.kind === "partial" && cur?.gen === msg.gen && cur.nPages > doc.numPages) return doc.destroy();
+  if ((cur && cur.gen > msg.gen) || (msg.kind === "partial" && cur?.gen === msg.gen && cur.nPages > doc.numPages)) {
+    missedFirst = Math.min(missedFirst, msg.firstChanged);
+    return doc.destroy();
+  }
+  const first = Math.min(msg.firstChanged, missedFirst);
+  missedFirst = Infinity;
   const old = docs[msg.kind];
   docs[msg.kind] = { gen: msg.gen, url: msg.url, doc, nPages: doc.numPages };
   if (pages.length <= 1) {
@@ -106,8 +117,8 @@ async function load(msg) {
     defaultSize = { w: vp.width, h: vp.height };
   }
   layout();
-  for (let i = msg.firstChanged; i <= doc.numPages && i < pages.length; i++) {
-    if (pages[i].gen !== msg.gen && sourceFor(i)?.gen === msg.gen) pages[i].dirty = true;
+  for (let i = first; i <= doc.numPages && i < pages.length; i++) {
+    if (pages[i].gen !== msg.gen && sourceFor(i)?.gen === msg.gen) pages[i].ver++;
   }
   await renderVisible();
   old?.doc.destroy();
@@ -131,7 +142,7 @@ function onClick(ev) {
   const el = ev.target.closest(".page");
   if (!el) return;
   const i = Number(el.dataset.page);
-  const src = sourceFor(i);
+  if (!pages[i].url) return;
   const rect = el.getBoundingClientRect();
   const z = pages[i].zoom ?? zoom();
   let before = "";
@@ -150,7 +161,7 @@ function onClick(ev) {
   }
   fetch("/click", {
     method: "POST",
-    body: JSON.stringify({ url: src.url, page: i, x: (ev.clientX - rect.left) / z, y: (ev.clientY - rect.top) / z, before, after }),
+    body: JSON.stringify({ url: pages[i].url, page: i, x: (ev.clientX - rect.left) / z, y: (ev.clientY - rect.top) / z, before, after }),
   });
 }
 
@@ -200,7 +211,7 @@ addEventListener("keydown", (e) => {
   dispatchEvent(new Event("resize"));
 });
 addEventListener("resize", () => {
-  for (const p of pages.slice(1)) p.dirty = true;
+  for (const p of pages.slice(1)) p.ver++;
   layout();
   renderVisible();
 });

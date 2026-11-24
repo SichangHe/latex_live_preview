@@ -79,15 +79,14 @@ function onPdf(p, pdf) {
   }
 }
 
-/** Cross-references and citations settle over runs: when a finished run wrote auxiliary
- * files different from those it started with, run bibtex/biber if needed and compile again. */
 /** Sends the errors of the run in `dir` (`-file-line-error` log lines) for each project file. */
 function publishDiagnostics(p, dir) {
-  const log = fs.readFileSync(path.join(dir, "main.log"), "utf8");
+  const log = readOr(path.join(dir, "main.log"), "");
+  const root = path.dirname(p.mainTex) + path.sep;
   const byFile = new Map([...p.diagnosed].map((f) => [f, []]));
   for (const m of log.matchAll(/^(.+?\.\w+):(\d+): (.*)$/gm)) {
     const file = path.resolve(path.dirname(p.mainTex), m[1]);
-    if (!file.startsWith(path.dirname(p.mainTex))) continue;
+    if (!file.startsWith(root)) continue;
     const line = Number(m[2]) - 1;
     const range = { start: { line, character: 0 }, end: { line, character: 1000 } };
     byFile.set(file, [...(byFile.get(file) ?? []), { range, severity: 1, source: "llp", message: m[3] }]);
@@ -98,13 +97,16 @@ function publishDiagnostics(p, dir) {
   }
 }
 
+/** Cross-references and citations settle over runs: when a finished run wrote auxiliary
+ * files different from those it started with, run bibtex/biber if needed and compile again. */
 function rerunIfStale(p, { dir, seed }, force) {
   if (!force && (seedSig(dir) === seed || p.autoReruns >= MAX_AUTO_RERUNS)) return;
   p.autoReruns += 1;
-  const aux = fs.readFileSync(path.join(dir, "main.aux"), "latin1");
+  const aux = readOr(path.join(dir, "main.aux"), "");
   const bib = fs.existsSync(path.join(dir, "main.bcf")) ? "biber" : aux.includes("\\bibdata") ? "bibtex" : null;
   const env = { ...process.env, BIBINPUTS: `${path.dirname(p.mainTex)}:`, BSTINPUTS: `${path.dirname(p.mainTex)}:` };
-  const recompile = () => p.engine.cold(dir);
+  const gen = p.engine.gen();
+  const recompile = () => p.engine.gen() === gen && p.engine.cold(dir);
   if (bib) execFile(bib, ["main"], { cwd: dir, env }, recompile);
   else recompile();
 }
@@ -121,6 +123,7 @@ function gcRuns(p) {
 }
 
 function onHttp(p, req, res) {
+  if (req.headers.host !== `127.0.0.1:${p.server.address().port}`) return res.writeHead(403).end();
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/events") {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store" });
@@ -132,7 +135,7 @@ function onHttp(p, req, res) {
   if (url.pathname === "/click" && req.method === "POST") {
     let body = "";
     req.on("data", (c) => (body += c));
-    req.on("end", () => onClick(p, JSON.parse(body)).finally(() => res.end()));
+    req.on("end", () => onClick(p, JSON.parse(body)).catch((e) => log(`click: ${e}`)).finally(() => res.end()));
     return;
   }
   const out = /^\/out\/(g\d+(?:p\d+)?)\/main\.pdf$/.exec(url.pathname);
@@ -142,18 +145,19 @@ function onHttp(p, req, res) {
     if (err) return res.writeHead(404).end();
     const head = { "content-type": type, "cache-control": "no-store", "accept-ranges": "bytes" };
     const range = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
-    if (!range) return fs.createReadStream(file).pipe(res.writeHead(200, { ...head, "content-length": st.size }));
-    const [start, end] = [Number(range[1]), range[2] ? Number(range[2]) : st.size - 1];
+    if (!range) return fs.createReadStream(file).on("error", () => res.destroy()).pipe(res.writeHead(200, { ...head, "content-length": st.size }));
+    const [start, end] = [Number(range[1]), Math.min(st.size - 1, range[2] ? Number(range[2]) : st.size - 1)];
+    if (start > end) return res.writeHead(416).end();
     res.writeHead(206, { ...head, "content-length": end - start + 1, "content-range": `bytes ${start}-${end}/${st.size}` });
-    fs.createReadStream(file, { start, end }).pipe(res);
+    fs.createReadStream(file, { start, end }).on("error", () => res.destroy()).pipe(res);
   });
 }
 
 /** Viewer click: jump the editor to the exact source character. */
 async function onClick(p, { url, page, x, y, before, after }) {
   const dir = path.join(p.runDir, path.basename(path.dirname(url)));
-  const pdf = fs.existsSync(path.join(dir, "main.synctex")) ? path.join(dir, "main.pdf") : path.join(p.latest.done.dir, "main.pdf");
-  const r = await inverse({ pdf, page, x, y, before, after }, readText);
+  if (!fs.existsSync(path.join(dir, "main.synctex"))) return;
+  const r = await inverse({ pdf: path.join(dir, "main.pdf"), page, x, y, before, after }, readText);
   if (!r) return;
   const pos = { line: r.line, character: r.col };
   send({
@@ -167,7 +171,8 @@ async function onClick(p, { url, page, x, y, before, after }) {
 async function reveal(uri, position) {
   const p = project;
   const doc = docs.get(uri);
-  const l = p?.latest.done ?? p?.latest.partial;
+  const { done, partial } = p?.latest ?? {};
+  const l = partial && (!done || partial.gen > done.gen) ? partial : done;
   if (!doc || !l) return;
   const r = await forward({ pdf: path.join(l.dir, "main.pdf"), file: doc.file, line: position.line, col: position.character }, readText);
   if (r) broadcast(p, { type: "reveal", ...r });
@@ -197,6 +202,7 @@ function onEdit(doc, firstLine) {
     if (main) project = startProject(main);
     return;
   }
+  if (doc.file.endsWith(".bib")) return;
   project.autoReruns = 0;
   project.engine.writeShadow(doc.file, doc.text);
   project.engine.edit(doc.file, firstLine + 1);
@@ -220,8 +226,8 @@ function onLsp(msg) {
       const { uri, text } = params.textDocument;
       const doc = { file: path.normalize(fileURLToPath(uri)), text };
       docs.set(uri, doc);
-      const disk = (() => { try { return fs.readFileSync(doc.file, "utf8"); } catch { return null; } })();
-      if (!project || disk !== text) onEdit(doc, firstDiffLine(disk ?? "", text));
+      const disk = readOr(doc.file, "");
+      if (!project || disk !== text) onEdit(doc, firstDiffLine(disk, text));
       return;
     }
     case "textDocument/didChange": {
@@ -237,9 +243,15 @@ function onLsp(msg) {
       }
       return;
     }
-    case "textDocument/didClose":
+    case "textDocument/didClose": {
+      const doc = docs.get(params.textDocument.uri);
       docs.delete(params.textDocument.uri);
+      if (!project || !doc) return;
+      const disk = readOr(doc.file, "");
+      project.engine.dropShadow(doc.file);
+      if (disk !== doc.text) project.engine.edit(doc.file, firstDiffLine(doc.text, disk) + 1);
       return;
+    }
     case "llp/cursor":
       return void reveal(params.textDocument.uri, params.position);
     case "workspace/executeCommand":
@@ -248,13 +260,25 @@ function onLsp(msg) {
     case "shutdown":
       return send({ id, result: null });
     case "exit":
-      project?.engine.close();
-      if (project) fs.rmSync(project.runDir, { recursive: true, force: true });
-      return process.exit(0);
+      return quit();
     default:
       if (id !== undefined && method) send({ id, error: { code: -32601, message: `unsupported: ${method}` } });
   }
 }
+
+function readOr(file, fallback) {
+  try { return fs.readFileSync(file, "utf8"); } catch { return fallback; }
+}
+
+/** Kills all TeX processes and removes scratch files; also on editor crash or signals. */
+function quit() {
+  project?.engine.close();
+  if (project) fs.rmSync(project.runDir, { recursive: true, force: true });
+  process.exit(0);
+}
+process.stdin.on("end", quit);
+for (const sig of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(sig, quit);
+process.on("uncaughtException", (e) => log(`error: ${e.stack}`));
 
 function firstDiffLine(a, b) {
   const la = a.split("\n");

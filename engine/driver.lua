@@ -64,8 +64,9 @@ local function become(dir, msg)
 end
 
 --- Snapshot: park on a FIFO; each `go GEN` forks a clone that resumes as generation GEN
---- with fresh source content; `quit` ends the snapshot. The clone stops Lua GC because a
---- collection touches the whole inherited heap, making the kernel copy it page by page.
+--- with fresh source content; `quit` ends the snapshot. The clone pauses Lua GC until its
+--- first new page is out: a collection touches the whole inherited heap, making the kernel
+--- copy it page by page.
 local function park()
   local fd = F.mkfifo(run_dir .. "/snap-" .. F.getpid())
   emit("snap", page, F.getpid(), encode_max_read())
@@ -103,6 +104,7 @@ end, "llp.buildpage_filter")
 
 luatexbase.add_to_callback("finish_pdfpage", function(shipping)
   page = page + 1
+  if page == start_page + 2 then collectgarbage("restart") end
   F.reap()
   if F.fork(true) == 0 then
     park()
