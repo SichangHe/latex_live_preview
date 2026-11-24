@@ -25,7 +25,7 @@ extern const char *luaL_checklstring(lua_State *, int, size_t *);
 
 #define MAX_FD 256
 static off_t fork_offs[MAX_FD];
-static char fork_names[MAX_FD][256];
+static char fork_names[MAX_FD][4096];
 
 /** Fork, flushing stdio first. With `record` true, first record names and write offsets of
  * all writable regular-file fds for a later `detach`; a clone of a parked snapshot passes
