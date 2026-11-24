@@ -33,6 +33,7 @@ function lineStarts(text) {
   return starts;
 }
 
+// 🧑 "clicking on the preview would teleport. The editor cursor at exactly the correct spot, as opposed to teleporting nearby."
 /** PDF point (`x`,`y` from the top-left of 1-based `page`) to `{file, line, col}` (0-based).
  * `before`/`after` are the rendered letters around the click; `readText(file)` gives source. */
 export async function inverse({ pdf, page, x, y, before, after }, readText) {

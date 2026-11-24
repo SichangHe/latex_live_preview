@@ -1,5 +1,6 @@
 /** Checks that the live preview equals a from-scratch `latexmk -lualatex` build, initially and
- * after incremental edits. Usage: node test/equivalence.mjs DIR MAIN.tex
+ * after incremental edits to EDIT.tex (default MAIN.tex).
+ * Usage: node test/equivalence.mjs DIR MAIN.tex [EDIT.tex]
  * Prints only failures and one summary line. */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -11,13 +12,14 @@ import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const SETTLE_MS = 4000;
-const [srcDir, mainName] = process.argv.slice(2);
+const [srcDir, mainName, editName = mainName] = process.argv.slice(2);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "llp-eq-"));
 const work = path.join(tmp, "work");
 fs.cpSync(srcDir, work, { recursive: true });
 const mainFile = path.join(work, mainName);
-const uri = pathToFileURL(mainFile).href;
-let text = fs.readFileSync(mainFile, "utf8");
+const editFile = path.join(work, editName);
+const uri = pathToFileURL(editFile).href;
+let text = fs.readFileSync(editFile, "utf8");
 let failed = false;
 const fail = (m) => {
   failed = true;
@@ -49,7 +51,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 send({ id: 1, method: "initialize", params: { capabilities: {} } });
 send({ method: "initialized", params: {} });
-send({ method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "latex", version: 1, text } } });
+const open = (u, t) => send({ method: "textDocument/didOpen", params: { textDocument: { uri: u, languageId: "latex", version: 1, text: t } } });
+if (editFile !== mainFile) open(pathToFileURL(mainFile).href, fs.readFileSync(mainFile, "utf8"));
+open(uri, text);
 while (!viewerUrl) await sleep(50);
 
 let latestDone = null;
@@ -100,7 +104,7 @@ function referenceText() {
   const ref = path.join(tmp, "ref");
   fs.rmSync(ref, { recursive: true, force: true });
   fs.cpSync(srcDir, ref, { recursive: true });
-  fs.writeFileSync(path.join(ref, mainName), text);
+  fs.writeFileSync(path.join(ref, editName), text);
   try {
     execFileSync("latexmk", ["-lualatex", "-f", "-interaction=nonstopmode", mainName], { cwd: ref, stdio: "ignore", timeout: 300_000 });
   } catch {}
@@ -142,7 +146,7 @@ function edit(line, newLineText) {
 await compare("initial");
 const lines = text.split("\n");
 const bodyStart = lines.findIndex((l) => l.includes("\\begin{document}"));
-const prose = lines.map((l, i) => i).filter((i) => i > bodyStart && /^[A-Za-z][^\\%]{40,}$/.test(lines[i]));
+const prose = lines.map((l, i) => i).filter((i) => i > bodyStart && /^[A-Za-z][^%]{40,}$/.test(lines[i]));
 if (prose.length < 2) fail("no prose lines to edit");
 else {
   const a = prose[Math.floor(prose.length / 2)];
@@ -151,6 +155,14 @@ else {
   const b = prose[Math.floor(prose.length * 0.8)];
   edit(b, "");
   await compare("after delete");
+  const c = prose[Math.floor(prose.length * 0.3)];
+  const orig = text.split("\n")[c];
+  for (const broken of [" \\textbf{unclosed", " $x^", " \\begin{itemize}", " \\undefinedmacro", " }"]) {
+    edit(c, orig + broken);
+    await sleep(700);
+  }
+  edit(c, orig + " fixed");
+  await compare("after errors then fix");
 }
 send({ id: 2, method: "shutdown" });
 send({ method: "exit" });

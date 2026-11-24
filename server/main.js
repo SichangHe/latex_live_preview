@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// 🧑 "Layout using. Latex engine, but display using a web browser. Doing some sort of. Language server or editor plugin. Ideally, mainly language server."
 /** `llp`: LaTeX live-preview language server with a browser viewer; see docs/index.md. */
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -6,7 +7,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { NOT_SEED, createEngine } from "./engine.js";
+import { createEngine, seedSig } from "./engine.js";
 import { lspTransport } from "./lsp.js";
 import { forward, inverse } from "./sync.js";
 
@@ -46,7 +47,7 @@ function findMain(file, text) {
 function startProject(mainTex) {
   const runDir = fs.mkdtempSync(path.join(fs.existsSync("/dev/shm") ? "/dev/shm" : os.tmpdir(), "llp-"));
   const clients = new Set();
-  const p = { mainTex, runDir, clients, latest: {}, autoReruns: 0, seedSig: "" };
+  const p = { mainTex, runDir, clients, latest: {}, autoReruns: 0, diagnosed: new Set() };
   p.engine = createEngine({ mainTex, runDir, log, onPdf: (pdf) => onPdf(p, pdf) });
   p.server = http.createServer((req, res) => onHttp(p, req, res)).listen(PORT, "127.0.0.1", () => {
     const url = `http://127.0.0.1:${p.server.address().port}/`;
@@ -64,11 +65,6 @@ function broadcast(p, msg) {
   for (const res of p.clients) res.write(`data: ${JSON.stringify(msg)}\n\n`);
 }
 
-function seedSig(dir) {
-  return fs.readdirSync(dir).filter((f) => !NOT_SEED.has(f)).sort()
-    .map((f) => f + "\0" + fs.readFileSync(path.join(dir, f), "latin1")).join("\0");
-}
-
 function pdfMsg({ gen, kind, firstChanged, dir }) {
   return { type: "pdf", gen, kind, firstChanged, url: `/out/${path.basename(dir)}/main.pdf` };
 }
@@ -77,22 +73,38 @@ function onPdf(p, pdf) {
   const { kind, dir } = pdf;
   p.latest[kind] = pdf;
   broadcast(p, pdfMsg(pdf));
-  if (kind === "done") rerunIfStale(p, dir);
+  if (kind === "done") {
+    publishDiagnostics(p, dir);
+    rerunIfStale(p, pdf, false);
+  }
 }
 
 /** Cross-references and citations settle over runs: when a finished run wrote auxiliary
  * files different from those it started with, run bibtex/biber if needed and compile again. */
-function rerunIfStale(p, dir) {
-  const sig = seedSig(dir);
-  if (sig === p.seedSig || p.autoReruns >= MAX_AUTO_RERUNS) return;
+/** Sends the errors of the run in `dir` (`-file-line-error` log lines) for each project file. */
+function publishDiagnostics(p, dir) {
+  const log = fs.readFileSync(path.join(dir, "main.log"), "utf8");
+  const byFile = new Map([...p.diagnosed].map((f) => [f, []]));
+  for (const m of log.matchAll(/^(.+?\.\w+):(\d+): (.*)$/gm)) {
+    const file = path.resolve(path.dirname(p.mainTex), m[1]);
+    if (!file.startsWith(path.dirname(p.mainTex))) continue;
+    const line = Number(m[2]) - 1;
+    const range = { start: { line, character: 0 }, end: { line, character: 1000 } };
+    byFile.set(file, [...(byFile.get(file) ?? []), { range, severity: 1, source: "llp", message: m[3] }]);
+  }
+  p.diagnosed = new Set([...byFile].filter(([, d]) => d.length).map(([f]) => f));
+  for (const [file, diagnostics] of byFile) {
+    send({ method: "textDocument/publishDiagnostics", params: { uri: pathToFileURL(file).href, diagnostics } });
+  }
+}
+
+function rerunIfStale(p, { dir, seed }, force) {
+  if (!force && (seedSig(dir) === seed || p.autoReruns >= MAX_AUTO_RERUNS)) return;
   p.autoReruns += 1;
   const aux = fs.readFileSync(path.join(dir, "main.aux"), "latin1");
   const bib = fs.existsSync(path.join(dir, "main.bcf")) ? "biber" : aux.includes("\\bibdata") ? "bibtex" : null;
   const env = { ...process.env, BIBINPUTS: `${path.dirname(p.mainTex)}:`, BSTINPUTS: `${path.dirname(p.mainTex)}:` };
-  const recompile = () => {
-    p.seedSig = seedSig(dir);
-    p.engine.cold(dir);
-  };
+  const recompile = () => p.engine.cold(dir);
   if (bib) execFile(bib, ["main"], { cwd: dir, env }, recompile);
   else recompile();
 }
@@ -198,7 +210,7 @@ function onLsp(msg) {
         id,
         result: {
           capabilities: {
-            textDocumentSync: { openClose: true, change: 2 },
+            textDocumentSync: { openClose: true, change: 2, save: true },
             executeCommandProvider: { commands: ["llp.forwardSearch"] },
           },
           serverInfo: { name: "llp" },
@@ -215,6 +227,14 @@ function onLsp(msg) {
     case "textDocument/didChange": {
       const doc = docs.get(params.textDocument.uri);
       if (doc) onEdit(doc, applyChanges(doc, params.contentChanges));
+      return;
+    }
+    case "textDocument/didSave": {
+      const file = fileURLToPath(params.textDocument.uri);
+      if (project?.latest.done && file.endsWith(".bib")) {
+        project.autoReruns = 0;
+        rerunIfStale(project, project.latest.done, true);
+      }
       return;
     }
     case "textDocument/didClose":

@@ -14,7 +14,9 @@ const docs = {};
 /** 1-based page -> {el, dirty, gen, size, zoom}; `gen` is the generation it shows; index 0 unused */
 const pages = [null];
 let defaultSize = { w: 612, h: 792 };
-const zoom = () => Math.min(2, (innerWidth - 24) / defaultSize.w);
+/** `+`/`-` scale pages relative to fitting the window width; `0` resets. */
+let userZoom = 1;
+const zoom = () => userZoom * Math.min(2, (innerWidth - 24) / defaultSize.w);
 
 /** Which loaded PDF shows page `i`: the partial if it is newer and has the page. */
 function sourceFor(i) {
@@ -191,6 +193,12 @@ async function reveal({ page, box, before, after }) {
 }
 
 document.addEventListener("click", onClick);
+addEventListener("keydown", (e) => {
+  const z = { "+": userZoom * 1.2, "=": userZoom * 1.2, "-": userZoom / 1.2, 0: 1 }[e.key];
+  if (z === undefined || e.ctrlKey || e.metaKey) return;
+  userZoom = z;
+  dispatchEvent(new Event("resize"));
+});
 addEventListener("resize", () => {
   for (const p of pages.slice(1)) p.dirty = true;
   layout();
