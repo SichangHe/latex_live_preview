@@ -1,10 +1,10 @@
 #!/bin/sh
 # Installs llp from the latest GitHub release:
-#   curl -fsSL https://raw.githubusercontent.com/SichangHe/llp/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/SichangHe/latex_live_preview/main/install.sh | sh
 # Puts `llp` in ~/.local/bin, its LuaTeX module in ~/.local/lib/llp, and the Neovim plugin in
 # Neovim's package path, where it starts itself for TeX files.
 set -eu
-REPO=SichangHe/llp
+REPO=SichangHe/latex_live_preview
 PREFIX="${LLP_PREFIX:-$HOME/.local}"
 NVIM_PACK="${XDG_DATA_HOME:-$HOME/.local/share}/nvim/site/pack/llp/start/llp"
 

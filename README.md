@@ -10,7 +10,7 @@ llp is a language server written in Rust. Each edit recompiles only from the edi
 You need Linux and TeX Live with `lualatex` and `synctex`.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/SichangHe/llp/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/SichangHe/latex_live_preview/main/install.sh | sh
 ```
 
 This installs `llp` into `~/.local/bin` and the Neovim plugin into Neovim's package path. Opening a `.tex` file then starts the preview, with no configuration needed.
