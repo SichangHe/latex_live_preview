@@ -14,6 +14,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: tag matches crate version
+        run: test "${GITHUB_REF_NAME#v}" = "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)"
+      - run: cargo clippy --release --locked -- -D warnings
       - run: cargo build --release --locked
       - name: package
         run: |

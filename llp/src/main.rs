@@ -15,6 +15,7 @@ use std::ffi::OsString;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{Sender, channel};
@@ -42,7 +43,8 @@ pub enum Msg {
     Ev(String),
     Sse(TcpStream),
     Click(Value),
-    Fs(i32, OsString),
+    /// inotify event: watch descriptor, name, whether it is a directory
+    Fs(i32, OsString, bool),
     Tick,
     Watchdog(u64),
     BibDone(u64, PathBuf),
@@ -101,7 +103,11 @@ fn main() {
         srv.start_project(main);
     }
     for msg in rx {
-        srv.handle(msg);
+        // A bug must not orphan the TeX processes: log it and keep serving.
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| srv.handle(msg)));
+        if r.is_err() {
+            log("internal error while handling a message; continuing");
+        }
     }
 }
 
@@ -120,22 +126,30 @@ fn find_native() -> Option<PathBuf> {
     .find(|p| p.exists())
 }
 
-/// Turns SIGTERM, SIGHUP and SIGINT into `Msg::Quit` so TeX processes are always killed. Must
-/// run before other threads start so they inherit the blocked mask.
+/// Write end of the self-pipe the signal handler pokes.
+static SIGNAL_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+extern "C" fn on_signal(_: libc::c_int) {
+    let fd = SIGNAL_FD.load(std::sync::atomic::Ordering::Relaxed);
+    unsafe { libc::write(fd, [0u8].as_ptr().cast(), 1) };
+}
+
+/// Turns SIGTERM, SIGHUP and SIGINT into `Msg::Quit` so TeX processes are always killed.
 fn handle_signals(tx: Sender<Msg>) {
-    unsafe {
-        let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut set);
-        for s in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
-            libc::sigaddset(&mut set, s);
-        }
-        libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-        std::thread::spawn(move || {
-            let mut sig = 0;
-            libc::sigwait(&set, &mut sig);
-            let _ = tx.send(Msg::Quit);
-        });
+    let mut fds = [0; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return;
     }
+    SIGNAL_FD.store(fds[1], std::sync::atomic::Ordering::Relaxed);
+    for s in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
+        unsafe { libc::signal(s, on_signal as *const () as libc::sighandler_t) };
+    }
+    std::thread::spawn(move || {
+        let mut b = 0u8;
+        if unsafe { libc::read(fds[0], (&mut b as *mut u8).cast(), 1) } == 1 {
+            let _ = tx.send(Msg::Quit);
+        }
+    });
 }
 
 struct Project {
@@ -212,7 +226,14 @@ impl Server {
             Msg::Lsp(v) => self.on_lsp(v),
             Msg::Quit => self.quit(),
             Msg::Ev(line) => {
-                if let Some(pdf) = self.project.as_mut().and_then(|p| p.engine.on_event(&line)) {
+                let Some(p) = &mut self.project else { return };
+                let pdf = p.engine.on_event(&line);
+                for f in p.engine.take_new_inputs() {
+                    if let Ok(t) = std::fs::read_to_string(&f) {
+                        p.disk_text.entry(f).or_insert(t);
+                    }
+                }
+                if let Some(pdf) = pdf {
                     self.on_pdf(pdf);
                 }
             }
@@ -229,7 +250,7 @@ impl Server {
                 }
             }
             Msg::Click(v) => self.on_click(&v),
-            Msg::Fs(wd, name) => self.on_fs(wd, &name),
+            Msg::Fs(wd, name, is_dir) => self.on_fs(wd, &name, is_dir),
             Msg::Tick => self.gc_runs(),
             Msg::Watchdog(g) => {
                 if let Some(p) = &mut self.project {
@@ -276,6 +297,17 @@ impl Server {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_or(0, |d| d.as_micros())
         ));
+        let port = std::env::var("LLP_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(0);
+        let listener = match TcpListener::bind(("127.0.0.1", port)) {
+            Ok(l) => l,
+            Err(e) => return log(&format!("cannot listen on port {port}: {e}")),
+        };
+        if let Err(e) = std::fs::DirBuilder::new().mode(0o700).create(&run_dir) {
+            return log(&format!("cannot create {}: {e}", run_dir.display()));
+        }
         let engine = match Engine::new(
             main_tex.clone(),
             run_dir.clone(),
@@ -284,14 +316,6 @@ impl Server {
         ) {
             Ok(e) => e,
             Err(e) => return log(&format!("cannot set up {}: {e}", run_dir.display())),
-        };
-        let port = std::env::var("LLP_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(0);
-        let listener = match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(l) => l,
-            Err(e) => return log(&format!("cannot listen on port {port}: {e}")),
         };
         let url = format!(
             "http://127.0.0.1:{}/",
@@ -360,7 +384,7 @@ impl Server {
             if !file.starts_with(&p.root) {
                 continue;
             }
-            let range = json!({ "start": { "line": l - 1, "character": 0 }, "end": { "line": l - 1, "character": 1000 } });
+            let range = json!({ "start": { "line": l.saturating_sub(1), "character": 0 }, "end": { "line": l.saturating_sub(1), "character": 1000 } });
             by_file
                 .entry(file)
                 .or_default()
@@ -518,18 +542,19 @@ impl Server {
             return;
         }
         p.engine.write_shadow(file, text);
-        if file == p.main_tex || p.engine.reads(file) {
-            p.auto_reruns = 0;
-            p.engine.edit(file, first_line + 1);
-        }
+        p.auto_reruns = 0;
+        p.engine.edit(file, first_line + 1);
     }
 
     /// A file in the project directory was written by something other than the editor.
-    fn on_fs(&mut self, wd: i32, name: &std::ffi::OsStr) {
+    fn on_fs(&mut self, wd: i32, name: &std::ffi::OsStr, is_dir: bool) {
         let Some(p) = &mut self.project else { return };
         let Some(path) = p.watcher.as_ref().and_then(|w| w.path(wd, name)) else {
             return;
         };
+        if is_dir {
+            return p.watcher.iter_mut().for_each(|w| w.add_new(&path));
+        }
         let n = name.to_string_lossy();
         let ext_ok = path
             .extension()
@@ -545,9 +570,19 @@ impl Server {
         if p.disk_hash.insert(path.clone(), h.finish()) == Some(h.finish()) {
             return;
         }
+        let is_input =
+            path == p.main_tex || p.engine.reads(&path) || p.disk_text.contains_key(&path);
+        if !is_input && p.engine.busy() {
+            // Written while TeX runs: attributed to shell-escape tools, whose output may differ
+            // every run; reacting would loop.
+            return;
+        }
         p.auto_reruns = 0;
-        if path == p.main_tex || p.engine.reads(&path) {
+        if is_input {
             let text = String::from_utf8_lossy(&bytes).into_owned();
+            if p.disk_text.get(&path) == Some(&text) {
+                return;
+            }
             let line = p
                 .disk_text
                 .get(&path)
@@ -614,7 +649,7 @@ impl Server {
                 let Some(p) = &mut self.project else { return };
                 let disk = std::fs::read_to_string(&file).unwrap_or_default();
                 p.engine.drop_shadow(&file);
-                if disk != text && (file == p.main_tex || p.engine.reads(&file)) {
+                if disk != text {
                     p.engine.edit(&file, first_diff_line(&text, &disk) + 1);
                 }
             }
@@ -657,8 +692,19 @@ fn find_main(file: &Path, text: &str) -> Option<PathBuf> {
             continue;
         };
         let c = c.trim_start();
-        if c.len() > 9 && c[..9].eq_ignore_ascii_case("!tex root") {
-            let root = c[9..].trim_start().strip_prefix('=')?.trim();
+        let is_root = c
+            .as_bytes()
+            .get(..9)
+            .is_some_and(|b| b.eq_ignore_ascii_case(b"!tex root"));
+        let Some(root) = c
+            .get(9..)
+            .filter(|_| is_root)
+            .and_then(|r| r.trim_start().strip_prefix('='))
+        else {
+            continue;
+        };
+        {
+            let root = root.trim();
             let p = file.parent()?.join(root);
             return Some(std::fs::canonicalize(&p).unwrap_or(p));
         }

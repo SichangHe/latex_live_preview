@@ -17,7 +17,8 @@ esac
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL "https://github.com/$REPO/releases/latest/download/llp-$arch-linux.tar.gz" | tar -xz -C "$tmp"
+curl -fsSL -o "$tmp/llp.tar.gz" "https://github.com/$REPO/releases/latest/download/llp-$arch-linux.tar.gz"
+tar -xzf "$tmp/llp.tar.gz" -C "$tmp"
 mkdir -p "$PREFIX/bin" "$PREFIX/lib/llp" "$NVIM_PACK"
 install -m 755 "$tmp/llp" "$PREFIX/bin/llp"
 install -m 644 "$tmp/libllpfork.so" "$PREFIX/lib/llp/libllpfork.so"

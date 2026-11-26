@@ -50,7 +50,7 @@ impl Watcher {
             libc::inotify_add_watch(
                 self.fd,
                 c.as_ptr(),
-                libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO,
+                libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO | libc::IN_CREATE,
             )
         };
         if wd >= 0 {
@@ -61,6 +61,17 @@ impl Watcher {
     /// Path of a file event from the reader thread.
     pub fn path(&self, wd: i32, name: &OsStr) -> Option<PathBuf> {
         Some(self.dirs.get(&wd)?.join(name))
+    }
+
+    /// Starts watching a directory created after startup.
+    pub fn add_new(&mut self, dir: &Path) {
+        if self.dirs.len() < MAX_DIRS
+            && !dir
+                .file_name()
+                .is_some_and(|n| n.as_bytes().starts_with(b"."))
+        {
+            self.add(dir);
+        }
     }
 }
 
@@ -80,7 +91,11 @@ fn read_events(fd: i32, tx: Sender<Msg>) {
             let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())];
             if !name.is_empty()
                 && tx
-                    .send(Msg::Fs(ev.wd, OsStr::from_bytes(name).to_os_string()))
+                    .send(Msg::Fs(
+                        ev.wd,
+                        OsStr::from_bytes(name).to_os_string(),
+                        ev.mask & libc::IN_ISDIR != 0,
+                    ))
                     .is_err()
             {
                 return;

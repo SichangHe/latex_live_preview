@@ -60,7 +60,9 @@ pub struct Engine {
     groups: Vec<i32>,
     /// resumed generation and its snapshot page, until the clone reports
     awaiting: Option<(u64, u64)>,
+    /// canonical path of each raw path TeX reported
     canonical: HashMap<String, PathBuf>,
+    new_inputs: Vec<PathBuf>,
 }
 
 /// Hash of the aux files (`.aux`, `.bbl`, `.toc`, ...) in `dir`.
@@ -133,6 +135,7 @@ impl Engine {
             groups: vec![],
             awaiting: None,
             canonical: HashMap::new(),
+            new_inputs: vec![],
         })
     }
 
@@ -140,9 +143,19 @@ impl Engine {
         self.generation
     }
 
-    /// Whether TeX reads `file`, per the snapshots; true before any snapshot exists.
+    /// Whether TeX reads `file`, per the snapshots.
     pub fn reads(&self, file: &Path) -> bool {
-        self.snaps.is_empty() || self.snaps.values().any(|s| s.max_read.contains_key(file))
+        self.snaps.values().any(|s| s.max_read.contains_key(file))
+    }
+
+    /// A generation is compiling.
+    pub fn busy(&self) -> bool {
+        !self.running.is_empty() || self.awaiting.is_some()
+    }
+
+    /// Input files first reported since the last call.
+    pub fn take_new_inputs(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.new_inputs)
     }
 
     fn tell_snap(&self, pid: i32, cmd: &str) {
@@ -224,16 +237,7 @@ impl Engine {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0);
-        // SAFETY: `pthread_sigmask` is async-signal-safe; this undoes `handle_signals`'s mask.
-        let spawned = unsafe {
-            spawned.pre_exec(|| {
-                let mut set: libc::sigset_t = std::mem::zeroed();
-                libc::sigemptyset(&mut set);
-                libc::pthread_sigmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());
-                Ok(())
-            })
-        }
-        .spawn();
+        let spawned = spawned.spawn();
         match spawned {
             Ok(child) => {
                 let pid = child.id() as i32;
@@ -327,6 +331,7 @@ impl Engine {
         }
         let p = fs::canonicalize(name).unwrap_or_else(|_| PathBuf::from(name));
         self.canonical.insert(name.into(), p.clone());
+        self.new_inputs.push(p.clone());
         p
     }
 

@@ -2,7 +2,10 @@
 use serde_json::Value;
 use std::io::{BufRead, Write};
 
-/// Reads one message; `None` at end of input or on a malformed frame.
+/// Most bytes one message may claim.
+const MAX_LEN: usize = 1 << 28;
+
+/// Reads one message; `None` at end of input; `Some(Value::Null)` for an unparsable one.
 pub fn read(r: &mut impl BufRead) -> Option<Value> {
     let mut len = None;
     loop {
@@ -20,9 +23,9 @@ pub fn read(r: &mut impl BufRead) -> Option<Value> {
             len = v.trim().parse::<usize>().ok();
         }
     }
-    let mut body = vec![0; len?];
+    let mut body = vec![0; len.filter(|&n| n <= MAX_LEN)?];
     r.read_exact(&mut body).ok()?;
-    serde_json::from_slice(&body).ok()
+    Some(serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
 pub fn write(w: &mut impl Write, mut msg: Value) {
