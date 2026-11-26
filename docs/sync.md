@@ -4,13 +4,13 @@
 problem: SyncTeX maps PDF points to source lines only (column is always -1), and its line is sometimes a neighbor
 
 approach: SyncTeX for the rough spot, then letter matching for the exact character
-- `server/match.js`, shared by server and viewer
+- `viewer/match.js` (viewer) and `llp/src/sync.rs` (server) implement the same two functions
     - `letters(text, tex)`: lowercase letters/digits only, NFKD (ligatures, accents), with index map
         - `tex`: skip control-sequence names and `%` comments
         - so hyphenation, spacing, ligatures, `\emph{...}` braces do not matter
     - `bestSplit(hay, before, after, prefer)`: position maximizing matched suffix of `before` + prefix of `after`; ties → nearest `prefer`
 
-inverse (click → editor), `server/sync.js` `inverse`
+inverse (click → editor), `sync.rs` `inverse`
 - viewer sends page, PDF point, and 40 letters before/after the clicked caret (`caretPositionFromPoint` in the pdf.js text layer)
 - `synctex edit` → file, line
 - match in ±6 lines; if < 80% of context letters match, match the whole file

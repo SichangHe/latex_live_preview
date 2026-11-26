@@ -1,6 +1,7 @@
 --- Neovim client for `llp`, the LaTeX live-preview language server.
---- Usage: `require("llp").setup({ cmd = { "/path/to/latex_live_preview/server/main.js" } })`.
-local M = {}
+--- `plugin/llp.lua` calls `setup` with defaults unless you call it first, e.g.
+--- `require("llp").setup({ cmd = { "/path/to/llp" }, cursor_delay_ms = 100 })`.
+local M = { configured = false }
 
 local function notify_cursor(buf)
   local client = vim.lsp.get_clients({ bufnr = buf, name = "llp" })[1]
@@ -11,6 +12,7 @@ end
 
 function M.setup(opts)
   opts = opts or {}
+  M.configured = true
   local group = vim.api.nvim_create_augroup("llp", {})
   vim.api.nvim_create_autocmd("FileType", {
     group = group,

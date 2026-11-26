@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "test-only dependencies; the product itself needs no Node",
+  "devDependencies": { "playwright-core": "1.57.0" }
+}

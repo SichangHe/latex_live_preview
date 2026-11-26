@@ -27,7 +27,7 @@ const fail = (m) => {
 fs.writeFileSync(path.join(tmp, "init.lua"), `
 vim.opt.rtp:prepend(${JSON.stringify(path.join(ROOT, "editors/nvim"))})
 vim.ui.open = function(url) vim.g.llp_url = url; return nil, nil end
-require("llp").setup({ cmd = { ${JSON.stringify(path.join(ROOT, "server/main.js"))} } })
+require("llp").setup({ cmd = { ${JSON.stringify(path.join(ROOT, "target/release/llp"))} } })
 `);
 const nvimProc = spawn("nvim", ["--headless", "--listen", sock, "-u", path.join(tmp, "init.lua"), texFile], {
   stdio: ["ignore", "ignore", fs.openSync(path.join(tmp, "nvim.err"), "w")],

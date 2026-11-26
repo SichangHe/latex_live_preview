@@ -1,0 +1,12 @@
+[package]
+name = "llpfork"
+description = "LuaTeX module that forks snapshots of a running TeX process"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+libc = "0.2"

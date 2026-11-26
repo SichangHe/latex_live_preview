@@ -1,0 +1,36 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { arch: x86_64, os: ubuntu-22.04 }
+          - { arch: aarch64, os: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release --locked
+      - name: package
+        run: |
+          mkdir -p dist/pkg
+          cp target/release/llp target/release/libllpfork.so dist/pkg/
+          cp -r editors/nvim dist/pkg/nvim
+          tar -czf dist/llp-${{ matrix.arch }}-linux.tar.gz -C dist/pkg .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llp-${{ matrix.arch }}
+          path: dist/*.tar.gz
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { merge-multiple: true }
+      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes llp-*.tar.gz
+        env:
+          GH_TOKEN: ${{ github.token }}

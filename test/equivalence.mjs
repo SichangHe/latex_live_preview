@@ -1,6 +1,8 @@
 /** Checks that the live preview equals a from-scratch `latexmk -lualatex` build, initially and
  * after incremental edits to EDIT.tex (default MAIN.tex).
  * Usage: node test/equivalence.mjs DIR MAIN.tex [EDIT.tex]
+ * With `LLP_TEST_DISK=1`, runs `llp MAIN.tex` without an editor and makes every edit on disk,
+ * alternating in-place writes and atomic renames, and also edits any `.bib` file.
  * Prints only failures and one summary line. */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -26,7 +28,9 @@ const fail = (m) => {
   console.log(`FAIL ${path.basename(srcDir)}: ${m}`);
 };
 
-const server = spawn(path.join(ROOT, "server/main.js"), [], { stdio: ["pipe", "pipe", fs.openSync(path.join(tmp, "llp.err"), "w")] });
+const DISK = process.env.LLP_TEST_DISK === "1";
+const errLog = path.join(tmp, "llp.err");
+const server = spawn(path.join(ROOT, "target/release/llp"), DISK ? [mainFile] : [], { stdio: ["pipe", "pipe", fs.openSync(errLog, "w")] });
 const send = (msg) => {
   const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...msg }));
   server.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
@@ -49,12 +53,17 @@ server.stdout.on("data", (c) => {
 });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-send({ id: 1, method: "initialize", params: { capabilities: {} } });
-send({ method: "initialized", params: {} });
-const open = (u, t) => send({ method: "textDocument/didOpen", params: { textDocument: { uri: u, languageId: "latex", version: 1, text: t } } });
-if (editFile !== mainFile) open(pathToFileURL(mainFile).href, fs.readFileSync(mainFile, "utf8"));
-open(uri, text);
-while (!viewerUrl) await sleep(50);
+if (!DISK) {
+  send({ id: 1, method: "initialize", params: { capabilities: {} } });
+  send({ method: "initialized", params: {} });
+  const open = (u, t) => send({ method: "textDocument/didOpen", params: { textDocument: { uri: u, languageId: "latex", version: 1, text: t } } });
+  if (editFile !== mainFile) open(pathToFileURL(mainFile).href, fs.readFileSync(mainFile, "utf8"));
+  open(uri, text);
+}
+while (!viewerUrl) {
+  if (DISK) viewerUrl = /viewer at (\S+)/.exec(fs.readFileSync(errLog, "utf8"))?.[1] ?? null;
+  await sleep(50);
+}
 
 let latestDone = null;
 let lastEventMs = Date.now();
@@ -103,7 +112,7 @@ function pdfText(pdf) {
 function referenceText() {
   const ref = path.join(tmp, "ref");
   fs.rmSync(ref, { recursive: true, force: true });
-  fs.cpSync(srcDir, ref, { recursive: true });
+  fs.cpSync(work, ref, { recursive: true });
   fs.writeFileSync(path.join(ref, editName), text);
   try {
     execFileSync("latexmk", ["-lualatex", "-f", "-interaction=nonstopmode", mainName], { cwd: ref, stdio: "ignore", timeout: 300_000 });
@@ -129,11 +138,19 @@ function compare(label) {
 }
 
 let version = 1;
+let nDiskWrites = 0;
+/** Writes like editors do: in place, or to a temp file renamed over the target. */
+function writeDisk(file, content) {
+  if (nDiskWrites++ % 2 === 0) return fs.writeFileSync(file, content);
+  fs.writeFileSync(file + ".tmp~", content);
+  fs.renameSync(file + ".tmp~", file);
+}
 function edit(line, newLineText) {
   const lines = text.split("\n");
   const old = lines[line];
   lines[line] = newLineText;
   text = lines.join("\n");
+  if (DISK) return writeDisk(editFile, text);
   send({
     method: "textDocument/didChange",
     params: {
@@ -163,9 +180,20 @@ else {
   }
   edit(c, orig + " fixed");
   await compare("after errors then fix");
+  const bib = fs.readdirSync(work).find((f) => f.endsWith(".bib"));
+  if (DISK && bib) {
+    const b = path.join(work, bib);
+    writeDisk(b, fs.readFileSync(b, "utf8").replace(/title\s*=\s*\{/i, "title={Retitled "));
+    await compare("after bib change");
+  }
 }
-send({ id: 2, method: "shutdown" });
-send({ method: "exit" });
-await sleep(500);
+if (DISK) server.kill("SIGTERM");
+else {
+  send({ id: 2, method: "shutdown" });
+  send({ method: "exit" });
+}
+await sleep(1000);
+const leftover = fs.readdirSync("/dev/shm").filter((d) => d.startsWith(`llp-${server.pid}-`));
+if (leftover.length) fail(`run dir left behind: ${leftover}`);
 if (!failed) console.log(`ok ${path.basename(srcDir)}`);
 process.exit(failed ? 1 : 0);

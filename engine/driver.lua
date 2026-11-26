@@ -1,5 +1,6 @@
 --- Snapshotting LuaLaTeX driver; see docs/engine.md.
---- Env: `LLP_NATIVE` llpfork.so, `LLP_EVENTS` event FIFO, `LLP_RUN` run dir,
+--- Run as `\directlua{dofile(os.getenv("LLP_DRIVER"))}`; inputs `LLP_MAIN` when loaded.
+--- Env: `LLP_NATIVE` libllpfork.so, `LLP_EVENTS` event FIFO, `LLP_RUN` run dir,
 --- `LLP_SHADOW` dir mirroring unsaved editor buffers by absolute path, `LLP_GEN` generation,
 --- `LLP_OUT` its output dir.
 local F = package.loadlib(os.getenv("LLP_NATIVE"), "luaopen_llpfork")()
@@ -127,3 +128,7 @@ luatexbase.add_to_callback("wrapup_run", function()
   emit(exit_msg)
   F.exit(0)
 end, "llp.wrapup_run")
+
+tex.sprint("\\input{")
+tex.sprint(-2, os.getenv("LLP_MAIN"))
+tex.sprint("}")

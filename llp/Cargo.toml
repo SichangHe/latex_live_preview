@@ -1,0 +1,11 @@
+[package]
+name = "llp"
+description = "Instant LaTeX preview language server with a browser viewer and exact SyncTeX"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+unicode-normalization = "0.1"
