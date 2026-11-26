@@ -12,11 +12,11 @@ why LuaLaTeX
 - Tectonic/XeTeX/pdfTeX have no such hooks
 
 pieces
-- `llpfork/` (Rust cdylib `libllpfork.so`): fork with recorded fd offsets, detach, FIFO, `_exit`
+- `ltxpfork/` (Rust cdylib `libltxpfork.so`): fork with recorded fd offsets, detach, FIFO, `_exit`
     - Lua API functions are declared by hand and resolved against LuaTeX at load time
-    - found as `LLP_NATIVE`, else next to the `llp` binary, else `../lib/llp/`
+    - found as `LTXP_NATIVE`, else next to the `ltxp` binary, else `../lib/ltxp/`
 - `engine/driver.lua`: loaded by `\directlua` before `\input{main}`
-- `llp/src/engine.rs`: gens and snapshots, owned by the server actor
+- `ltxp/src/engine.rs`: gens and snapshots, owned by the server actor
 
 driver
 - `open_read_file`: reads whole files into memory (shadow copy first), serves lines
@@ -45,16 +45,16 @@ server-side engine
     - none: cold gen
 - cold gens keep existing snapshots until their own replace them page by page
 - only events of the current gen count; older gens' snapshots are told to quit
-- snapshots ~5 MB each: above `LLP_MAX_SNAPS` (400) keep only pages divisible by a doubling stride
+- snapshots ~5 MB each: above `LTXP_MAX_SNAPS` (400) keep only pages divisible by a doubling stride
 
-server (`llp/src/main.rs`): one actor thread owns all state
+server (`ltxp/src/main.rs`): one actor thread owns all state
 - stdin (LSP), event FIFO, HTTP connections, inotify, timers, SyncTeX workers send it `Msg`s
 - SIGTERM/SIGHUP/SIGINT and stdin EOF kill all process groups and remove the run dir
 - auto rerun after `done` when aux files changed vs seed, at most `MAX_AUTO_RERUNS` in a row
     - runs `bibtex`/`biber` first when needed; saving a `.bib` forces this
 - diagnostics: `-file-line-error` lines of the done log
 - GC of old run dirs every 10 s
-- disk changes (`llp/src/watch.rs`): inotify on the project dir and non-hidden subdirs (depth ≤ 4, ≤ 512 dirs)
+- disk changes (`ltxp/src/watch.rs`): inotify on the project dir and non-hidden subdirs (depth ≤ 4, ≤ 512 dirs)
     - only watched extensions; files open in the editor are skipped, since the editor buffer wins
     - unchanged content (hash) is ignored, so tools rewriting identical files cause no loop
     - TeX input → incremental edit from the first changed line; `.bib` → bibtex/biber rerun; other → cold gen seeded with the last done aux files

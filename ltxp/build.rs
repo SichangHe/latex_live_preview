@@ -1,4 +1,4 @@
-//! Fetches the pinned pdf.js build into `OUT_DIR` for embedding, unless `LLP_PDFJS_DIR` already
+//! Fetches the pinned pdf.js build into `OUT_DIR` for embedding, unless `LTXP_PDFJS_DIR` already
 //! holds `pdf.min.mjs`, `pdf.worker.min.mjs` and `pdf_viewer.css`.
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -11,12 +11,12 @@ const FILES: [(&str, &str); 3] = [
 ];
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=LLP_PDFJS_DIR");
+    println!("cargo:rerun-if-env-changed=LTXP_PDFJS_DIR");
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
-    if let Ok(dir) = std::env::var("LLP_PDFJS_DIR") {
+    if let Ok(dir) = std::env::var("LTXP_PDFJS_DIR") {
         for (_, name) in FILES {
             std::fs::copy(Path::new(&dir).join(name), out.join(name))
-                .expect("LLP_PDFJS_DIR lacks a pdf.js file");
+                .expect("LTXP_PDFJS_DIR lacks a pdf.js file");
         }
         return;
     }
@@ -33,7 +33,7 @@ fn main() {
         .is_ok_and(|s| s.success());
     assert!(
         ok,
-        "downloading {url} failed; set LLP_PDFJS_DIR to a directory with the pdf.js files"
+        "downloading {url} failed; set LTXP_PDFJS_DIR to a directory with the pdf.js files"
     );
     let ok = Command::new("tar")
         .arg("-xzf")

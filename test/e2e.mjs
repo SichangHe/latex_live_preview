@@ -1,4 +1,4 @@
-/** End-to-end test with real Neovim, real `llp`, and real Chromium; prints only failures and
+/** End-to-end test with real Neovim, real `ltxp`, and real Chromium; prints only failures and
  * a summary. Usage: node test/e2e.mjs [TEX_FILE] (default: generated 200-section doc). */
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -7,10 +7,10 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const CHROME = process.env.LLP_CHROME ?? path.join(os.homedir(), ".cache/ms-playwright/chromium-1200/chrome-linux64/chrome");
+const CHROME = process.env.LTXP_CHROME ?? path.join(os.homedir(), ".cache/ms-playwright/chromium-1200/chrome-linux64/chrome");
 const N_CLICKS = 40;
 const N_FORWARD = 20;
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "llp-e2e-"));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ltxp-e2e-"));
 const sock = path.join(tmp, "nvim.sock");
 let texFile = process.argv[2];
 if (!texFile) {
@@ -26,8 +26,8 @@ const fail = (m) => {
 
 fs.writeFileSync(path.join(tmp, "init.lua"), `
 vim.opt.rtp:prepend(${JSON.stringify(path.join(ROOT, "editors/nvim"))})
-vim.ui.open = function(url) vim.g.llp_url = url; return nil, nil end
-require("llp").setup({ cmd = { ${JSON.stringify(path.join(ROOT, "target/release/llp"))} } })
+vim.ui.open = function(url) vim.g.ltxp_url = url; return nil, nil end
+require("ltxp").setup({ cmd = { ${JSON.stringify(path.join(ROOT, "target/release/ltxp"))} } })
 `);
 const nvimProc = spawn("nvim", ["--headless", "--listen", sock, "-u", path.join(tmp, "init.lua"), texFile], {
   stdio: ["ignore", "ignore", fs.openSync(path.join(tmp, "nvim.err"), "w")],
@@ -47,7 +47,7 @@ async function waitFor(fn, ms, what) {
   throw new Error(`timeout: ${what}`);
 }
 
-const url = await waitFor(() => fs.existsSync(sock) && lua("vim.g.llp_url"), 20000, "viewer url");
+const url = await waitFor(() => fs.existsSync(sock) && lua("vim.g.ltxp_url"), 20000, "viewer url");
 const browser = await chromium.launch({ executablePath: CHROME });
 const page = await browser.newPage({ viewport: { width: 1000, height: 1200 } });
 await page.goto(url);

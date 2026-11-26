@@ -115,7 +115,7 @@ impl Engine {
                 }
             }
         });
-        let max_snaps = std::env::var("LLP_MAX_SNAPS")
+        let max_snaps = std::env::var("LTXP_MAX_SNAPS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(400);
@@ -223,16 +223,16 @@ impl Engine {
         }
         let mut spawned = Command::new("bash");
         spawned
-            .args(["-c", r#"exec 200<"$LLP_OUT" && exec lualatex --shell-escape -synctex=-1 -interaction=nonstopmode -file-line-error -jobname=main -output-directory=/proc/self/fd/200 '\directlua{dofile(os.getenv("LLP_DRIVER"))}'"#])
+            .args(["-c", r#"exec 200<"$LTXP_OUT" && exec lualatex --shell-escape -synctex=-1 -interaction=nonstopmode -file-line-error -jobname=main -output-directory=/proc/self/fd/200 '\directlua{dofile(os.getenv("LTXP_DRIVER"))}'"#])
             .current_dir(self.main_tex.parent().unwrap_or(Path::new("/")))
-            .env("LLP_NATIVE", &self.native)
-            .env("LLP_EVENTS", self.run_dir.join("ev"))
-            .env("LLP_RUN", &self.run_dir)
-            .env("LLP_SHADOW", self.run_dir.join("shadow"))
-            .env("LLP_DRIVER", self.run_dir.join("driver.lua"))
-            .env("LLP_MAIN", &self.main_tex)
-            .env("LLP_GEN", self.generation.to_string())
-            .env("LLP_OUT", &dir)
+            .env("LTXP_NATIVE", &self.native)
+            .env("LTXP_EVENTS", self.run_dir.join("ev"))
+            .env("LTXP_RUN", &self.run_dir)
+            .env("LTXP_SHADOW", self.run_dir.join("shadow"))
+            .env("LTXP_DRIVER", self.run_dir.join("driver.lua"))
+            .env("LTXP_MAIN", &self.main_tex)
+            .env("LTXP_GEN", self.generation.to_string())
+            .env("LTXP_OUT", &dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

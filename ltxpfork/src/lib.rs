@@ -163,7 +163,7 @@ unsafe extern "C" fn l_getpid(l: *mut lua_State) -> c_int {
 /// # Safety
 /// Called by Lua's `package.loadlib` with a valid state.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn luaopen_llpfork(l: *mut lua_State) -> c_int {
+pub unsafe extern "C" fn luaopen_ltxpfork(l: *mut lua_State) -> c_int {
     let fns: [(&CStr, LuaFn); 7] = [
         (c"fork", l_fork),
         (c"detach", l_detach),

@@ -1,8 +1,8 @@
 # Viewer
 (authored by agents unless marked 🧑)
 
-`viewer/viewer.js` + `index.html` + `match.js`, embedded in the binary with pdf.js and served by `llp/src/http.rs` on `127.0.0.1` (`LLP_PORT`, default random)
-- pdf.js is fetched at build time by `llp/build.rs` (pinned version), or taken from `LLP_PDFJS_DIR`
+`viewer/viewer.js` + `index.html` + `match.js`, embedded in the binary with pdf.js and served by `ltxp/src/http.rs` on `127.0.0.1` (`LTXP_PORT`, default random)
+- pdf.js is fetched at build time by `ltxp/build.rs` (pinned version), or taken from `LTXP_PDFJS_DIR`
 - requests whose `Host` is not `127.0.0.1:PORT`/`localhost:PORT` are refused
 - server events over SSE `/events`: `pdf` (gen, kind, url, firstChanged) and `reveal`
 - clicks go to `POST /click`

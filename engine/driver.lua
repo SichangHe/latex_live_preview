@@ -1,14 +1,14 @@
 --- Snapshotting LuaLaTeX driver; see docs/engine.md.
---- Run as `\directlua{dofile(os.getenv("LLP_DRIVER"))}`; inputs `LLP_MAIN` when loaded.
---- Env: `LLP_NATIVE` libllpfork.so, `LLP_EVENTS` event FIFO, `LLP_RUN` run dir,
---- `LLP_SHADOW` dir mirroring unsaved editor buffers by absolute path, `LLP_GEN` generation,
---- `LLP_OUT` its output dir.
-local F = package.loadlib(os.getenv("LLP_NATIVE"), "luaopen_llpfork")()
-local run_dir, shadow = os.getenv("LLP_RUN"), os.getenv("LLP_SHADOW")
+--- Run as `\directlua{dofile(os.getenv("LTXP_DRIVER"))}`; inputs `LTXP_MAIN` when loaded.
+--- Env: `LTXP_NATIVE` libltxpfork.so, `LTXP_EVENTS` event FIFO, `LTXP_RUN` run dir,
+--- `LTXP_SHADOW` dir mirroring unsaved editor buffers by absolute path, `LTXP_GEN` generation,
+--- `LTXP_OUT` its output dir.
+local F = package.loadlib(os.getenv("LTXP_NATIVE"), "luaopen_ltxpfork")()
+local run_dir, shadow = os.getenv("LTXP_RUN"), os.getenv("LTXP_SHADOW")
 local FINISH_GAP_S = 0.15
-local ev = io.open(os.getenv("LLP_EVENTS"), "w")
+local ev = io.open(os.getenv("LTXP_EVENTS"), "w")
 ev:setvbuf("line")
-local gen, page, start_page, last_finish_s = tonumber(os.getenv("LLP_GEN")), 0, 0, 0
+local gen, page, start_page, last_finish_s = tonumber(os.getenv("LTXP_GEN")), 0, 0, 0
 local open_recs = {}
 local max_read = {}
 
@@ -43,7 +43,7 @@ luatexbase.add_to_callback("open_read_file", function(name)
     end,
     close = function() open_recs[rec] = nil end,
   }
-end, "llp.open_read_file")
+end, "ltxp.open_read_file")
 
 local function encode_max_read()
   local t = {}
@@ -54,7 +54,7 @@ local function encode_max_read()
 end
 
 --- What this process reports once its PDF, SyncTeX and log are closed.
-local exit_msg = "done " .. os.getenv("LLP_OUT")
+local exit_msg = "done " .. os.getenv("LTXP_OUT")
 
 --- Moves this process's outputs to `dir` and makes it report `msg` when they are closed.
 local function become(dir, msg)
@@ -101,7 +101,7 @@ end
 
 luatexbase.add_to_callback("buildpage_filter", function()
   if finishing then tex.finish() end
-end, "llp.buildpage_filter")
+end, "ltxp.buildpage_filter")
 
 luatexbase.add_to_callback("finish_pdfpage", function(shipping)
   page = page + 1
@@ -121,14 +121,14 @@ luatexbase.add_to_callback("finish_pdfpage", function(shipping)
   end
   emit("page", page)
   return shipping
-end, "llp.finish_pdfpage")
+end, "ltxp.finish_pdfpage")
 
 --- Outputs are closed here; skipping LuaTeX's teardown saves ~30 ms per run.
 luatexbase.add_to_callback("wrapup_run", function()
   emit(exit_msg)
   F.exit(0)
-end, "llp.wrapup_run")
+end, "ltxp.wrapup_run")
 
 tex.sprint("\\input{")
-tex.sprint(-2, os.getenv("LLP_MAIN"))
+tex.sprint(-2, os.getenv("LTXP_MAIN"))
 tex.sprint("}")

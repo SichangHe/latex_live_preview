@@ -1,5 +1,5 @@
 // 🧑 "Layout using. Latex engine, but display using a web browser. Doing some sort of. Language server or editor plugin. Ideally, mainly language server."
-//! `llp`: instant LaTeX preview language server with a browser viewer; see `docs/index.md`.
+//! `ltxp`: instant LaTeX preview language server with a browser viewer; see `docs/index.md`.
 //! One actor thread (`Server`) owns all state; stdin, the engine's event FIFO, HTTP
 //! connections, inotify, timers and SyncTeX workers send it `Msg`s.
 mod engine;
@@ -28,14 +28,14 @@ const WATCHED_EXTS: [&str; 20] = [
     "tex", "sty", "cls", "clo", "cfg", "def", "fd", "lua", "bib", "bst", "bbx", "cbx", "png",
     "jpg", "jpeg", "pdf", "eps", "svg", "csv", "tikz",
 ];
-const USAGE: &str = "llp: instant LaTeX preview in the browser
+const USAGE: &str = "ltxp: instant LaTeX preview in the browser
 
 usage:
-  llp            run as a language server on stdin/stdout (for editors)
-  llp FILE.tex   preview FILE.tex without an editor, recompiling on file changes
-  llp --version
+  ltxp            run as a language server on stdin/stdout (for editors)
+  ltxp FILE.tex   preview FILE.tex without an editor, recompiling on file changes
+  ltxp --version
 
-env: LLP_PORT (viewer port, default random), LLP_MAX_SNAPS (default 400)";
+env: LTXP_PORT (viewer port, default random), LTXP_MAX_SNAPS (default 400)";
 
 pub enum Msg {
     Lsp(Value),
@@ -53,18 +53,18 @@ pub enum Msg {
 }
 
 pub fn log(m: &str) {
-    eprintln!("[llp] {m}");
+    eprintln!("[ltxp] {m}");
 }
 
 fn main() {
     let arg = std::env::args().nth(1);
     match arg.as_deref() {
-        Some("--version" | "-V") => return println!("llp {}", env!("CARGO_PKG_VERSION")),
+        Some("--version" | "-V") => return println!("ltxp {}", env!("CARGO_PKG_VERSION")),
         Some("--help" | "-h") => return println!("{USAGE}"),
         _ => {}
     }
     let Some(native) = find_native() else {
-        return log("cannot find libllpfork.so next to the llp binary; set LLP_NATIVE");
+        return log("cannot find libltxpfork.so next to the ltxp binary; set LTXP_NATIVE");
     };
     let (tx, rx) = channel();
     handle_signals(tx.clone());
@@ -111,16 +111,16 @@ fn main() {
     }
 }
 
-/// `LLP_NATIVE`, else `libllpfork.so` next to the binary or in `../lib/llp/`.
+/// `LTXP_NATIVE`, else `libltxpfork.so` next to the binary or in `../lib/ltxp/`.
 fn find_native() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("LLP_NATIVE") {
+    if let Ok(p) = std::env::var("LTXP_NATIVE") {
         return Some(p.into());
     }
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     [
-        dir.join("libllpfork.so"),
-        dir.join("../lib/llp/libllpfork.so"),
+        dir.join("libltxpfork.so"),
+        dir.join("../lib/ltxp/libltxpfork.so"),
     ]
     .into_iter()
     .find(|p| p.exists())
@@ -291,13 +291,13 @@ impl Server {
             std::env::temp_dir()
         };
         let run_dir = base.join(format!(
-            "llp-{}-{}",
+            "ltxp-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map_or(0, |d| d.as_micros())
         ));
-        let port = std::env::var("LLP_PORT")
+        let port = std::env::var("LTXP_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(0);
@@ -388,7 +388,7 @@ impl Server {
             by_file
                 .entry(file)
                 .or_default()
-                .push(json!({ "range": range, "severity": 1, "source": "llp", "message": msg }));
+                .push(json!({ "range": range, "severity": 1, "source": "ltxp", "message": msg }));
         }
         p.diagnosed = by_file
             .iter()
@@ -612,9 +612,9 @@ impl Server {
             "initialize" => self.send(json!({ "id": id, "result": {
                 "capabilities": {
                     "textDocumentSync": { "openClose": true, "change": 2, "save": true },
-                    "executeCommandProvider": { "commands": ["llp.forwardSearch"] },
+                    "executeCommandProvider": { "commands": ["ltxp.forwardSearch"] },
                 },
-                "serverInfo": { "name": "llp", "version": env!("CARGO_PKG_VERSION") },
+                "serverInfo": { "name": "ltxp", "version": env!("CARGO_PKG_VERSION") },
             }})),
             "textDocument/didOpen" => {
                 let file = uri2path(uri);
@@ -653,9 +653,9 @@ impl Server {
                     p.engine.edit(&file, first_diff_line(&text, &disk) + 1);
                 }
             }
-            "llp/cursor" => self.reveal(uri, &params["position"]),
+            "ltxp/cursor" => self.reveal(uri, &params["position"]),
             "workspace/executeCommand" => {
-                if params["command"] == "llp.forwardSearch" {
+                if params["command"] == "ltxp.forwardSearch" {
                     let args = &params["arguments"];
                     self.reveal(args[0].as_str().unwrap_or(""), &args[1]);
                 }

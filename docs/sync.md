@@ -4,7 +4,7 @@
 problem: SyncTeX maps PDF points to source lines only (column is always -1), and its line is sometimes a neighbor
 
 approach: SyncTeX for the rough spot, then letter matching for the exact character
-- `viewer/match.js` (viewer) and `llp/src/sync.rs` (server) implement the same two functions
+- `viewer/match.js` (viewer) and `ltxp/src/sync.rs` (server) implement the same two functions
     - `letters(text, tex)`: lowercase letters/digits only, NFKD (ligatures, accents), with index map
         - `tex`: skip control-sequence names and `%` comments
         - so hyphenation, spacing, ligatures, `\emph{...}` braces do not matter
@@ -20,7 +20,7 @@ forward (cursor → viewer), `forward`
 - `synctex view` → page and box; server adds 40 source letters around the cursor
 - viewer matches them against that page's text layer, preferring spans overlapping the box
 - draws a blinking caret; falls back to highlighting the box
-- triggered by the `llp/cursor` notification (Neovim plugin, on cursor move) or command `llp.forwardSearch`
+- triggered by the `ltxp/cursor` notification (Neovim plugin, on cursor move) or command `ltxp.forwardSearch`
 
 limits
 - text without letters (pure symbols, figures) maps to the SyncTeX line start

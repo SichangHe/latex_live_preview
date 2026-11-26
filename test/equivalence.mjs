@@ -1,7 +1,7 @@
 /** Checks that the live preview equals a from-scratch `latexmk -lualatex` build, initially and
  * after incremental edits to EDIT.tex (default MAIN.tex).
  * Usage: node test/equivalence.mjs DIR MAIN.tex [EDIT.tex]
- * With `LLP_TEST_DISK=1`, runs `llp MAIN.tex` without an editor and makes every edit on disk,
+ * With `LTXP_TEST_DISK=1`, runs `ltxp MAIN.tex` without an editor and makes every edit on disk,
  * alternating in-place writes and atomic renames, and also edits any `.bib` file.
  * Prints only failures and one summary line. */
 import { execFileSync, spawn } from "node:child_process";
@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const SETTLE_MS = 4000;
 const [srcDir, mainName, editName = mainName] = process.argv.slice(2);
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "llp-eq-"));
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ltxp-eq-"));
 const work = path.join(tmp, "work");
 fs.cpSync(srcDir, work, { recursive: true });
 const mainFile = path.join(work, mainName);
@@ -28,9 +28,9 @@ const fail = (m) => {
   console.log(`FAIL ${path.basename(srcDir)}: ${m}`);
 };
 
-const DISK = process.env.LLP_TEST_DISK === "1";
-const errLog = path.join(tmp, "llp.err");
-const server = spawn(path.join(ROOT, "target/release/llp"), DISK ? [mainFile] : [], { stdio: ["pipe", "pipe", fs.openSync(errLog, "w")] });
+const DISK = process.env.LTXP_TEST_DISK === "1";
+const errLog = path.join(tmp, "ltxp.err");
+const server = spawn(path.join(ROOT, "target/release/ltxp"), DISK ? [mainFile] : [], { stdio: ["pipe", "pipe", fs.openSync(errLog, "w")] });
 const send = (msg) => {
   const body = Buffer.from(JSON.stringify({ jsonrpc: "2.0", ...msg }));
   server.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
@@ -193,7 +193,7 @@ else {
   send({ method: "exit" });
 }
 await sleep(1000);
-const leftover = fs.readdirSync("/dev/shm").filter((d) => d.startsWith(`llp-${server.pid}-`));
+const leftover = fs.readdirSync("/dev/shm").filter((d) => d.startsWith(`ltxp-${server.pid}-`));
 if (leftover.length) fail(`run dir left behind: ${leftover}`);
 if (!failed) console.log(`ok ${path.basename(srcDir)}`);
 process.exit(failed ? 1 : 0);
