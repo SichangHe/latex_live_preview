@@ -25,7 +25,7 @@ cargo build --release   # target/release/ltxp and the LuaTeX module libltxpfork.
 
 Open a `.tex` file in your editor. The preview opens in your browser, and its URL is also shown as a message. ltxp finds the main file from `\documentclass`, a `% !TEX root = main.tex` comment, or a file in the same or parent folder that has `\documentclass` and mentions the open file.
 
-- Neovim: the installer sets everything up. To configure it yourself: `require("ltxp").setup({ cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 })`. Set `vim.g.ltxp_disable = true` to turn it off.
+- Neovim: the installer keeps the plugin in `~/.local/share/ltxp/nvim` and, if your config imports lazy.nvim specs from `lua/plugins/` (as LazyVim does), adds `lua/plugins/ltxp.lua`, loaded for TeX files. Otherwise it prints the spec to add. Options: `opts = { cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 }`.
 - Emacs: uses the built-in Eglot. The installer adds a loader to your init file; by hand, `(load "/path/to/ltxp.el")` then `(ltxp-setup)`.
 - VS Code / VSCodium: the `ltxp` extension. Settings are `ltxp.path` and `ltxp.cursorDelayMs`.
 - Other editors: run `ltxp` as a language server for LaTeX. Forward search is the command `ltxp.forwardSearch` with arguments `[uri, position]`, or the notification `ltxp/cursor`.
