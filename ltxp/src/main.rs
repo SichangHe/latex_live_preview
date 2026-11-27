@@ -20,7 +20,8 @@ use std::process::Command;
 use std::sync::mpsc::{Sender, channel};
 use std::time::{Duration, SystemTime};
 
-const MAX_AUTO_RERUNS: u32 = 3;
+/// Like latexmk's default `$max_repeat`; reruns stop earlier once aux files are stable.
+const MAX_AUTO_RERUNS: u32 = 5;
 const GC_INTERVAL: Duration = Duration::from_secs(10);
 /// Extensions of files whose change on disk recompiles.
 const WATCHED_EXTS: [&str; 20] = [
