@@ -171,6 +171,12 @@ luatexbase.add_to_callback("wrapup_run", function()
   F.exit(0)
 end, "ltxp.wrapup_run")
 
+-- Newer LaTeX checks that a file exists with `kpse.find_file`, which resolves `../x` against
+-- this process's output dir. Searching the project dir too (`\input@path`, also used by
+-- graphicx) makes `\input{../sections/x}` and `\includegraphics{../figs/x}` work.
+tex.sprint("\\expandafter\\def\\csname input@path\\endcsname{{")
+tex.sprint(-2, project .. "/")
+tex.sprint("}}")
 tex.sprint("\\input{")
 tex.sprint(-2, os.getenv("LTXP_MAIN"))
 tex.sprint("}")
