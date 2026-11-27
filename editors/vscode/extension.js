@@ -8,6 +8,8 @@ const { LanguageClient } = require("vscode-languageclient/node");
 
 const TEX = ["latex", "tex"];
 let client;
+/** Whether the preview follows the cursor. */
+let sync = true;
 
 /** `ltxp.path`, else `ltxp` on PATH, else `~/.local/bin/ltxp`. */
 function findLtxp() {
@@ -21,7 +23,7 @@ function findLtxp() {
 }
 
 function sendCursor(editor) {
-  if (!client?.isRunning() || !editor || !TEX.includes(editor.document.languageId)) return;
+  if (!sync || !client?.isRunning() || !editor || !TEX.includes(editor.document.languageId)) return;
   client.sendNotification("ltxp/cursor", {
     textDocument: { uri: editor.document.uri.toString() },
     position: editor.selection.active,
@@ -62,6 +64,19 @@ function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("ltxp.openPreview", openPreview),
     vscode.commands.registerCommand("ltxp.stop", () => client?.stop()),
+    vscode.commands.registerCommand("ltxp.openLog", async () => {
+      if (!client?.isRunning()) return vscode.window.showErrorMessage("ltxp: not running; run \"ltxp: Open preview\" first");
+      const log = await client.sendRequest("workspace/executeCommand", { command: "ltxp.logPath", arguments: [] });
+      if (typeof log !== "string") return vscode.window.showWarningMessage("ltxp: no log yet: no compile has finished");
+      const doc = await vscode.workspace.openTextDocument(log);
+      const ed = await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+      const end = new vscode.Position(doc.lineCount - 1, 0);
+      ed.revealRange(new vscode.Range(end, end));
+    }),
+    vscode.commands.registerCommand("ltxp.toggleSync", () => {
+      sync = !sync;
+      vscode.window.showInformationMessage(`ltxp: preview follows cursor: ${sync ? "on" : "off"}`);
+    }),
     vscode.commands.registerCommand("ltxp.forwardSearchHere", () => sendCursor(vscode.window.activeTextEditor)),
     vscode.window.onDidChangeTextEditorSelection((e) => {
       clearTimeout(timer);

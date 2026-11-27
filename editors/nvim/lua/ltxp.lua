@@ -1,8 +1,9 @@
 --- Neovim client for `ltxp`, the instant LaTeX preview language server.
 --- Nothing starts on its own: `:LtxpPreview` starts ltxp for the current TeX buffer and opens
---- the preview; `:LtxpStop` stops it. Options for `setup`:
+--- the preview; `:LtxpStop` stops it; `:LtxpLog` opens the latest LaTeX log; `:LtxpSync [on|off]`
+--- toggles the preview following the cursor. Options for `setup`:
 --- `{ cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 }`.
-local M = { configured = false, opts = {} }
+local M = { configured = false, opts = {}, sync = true }
 
 local TEX_FT = { tex = true, plaintex = true, latex = true }
 
@@ -11,6 +12,7 @@ local function client_for(buf)
 end
 
 local function notify_cursor(buf)
+  if not M.sync then return end
   local client = client_for(buf)
   if not client then return end
   client:notify("ltxp/cursor", vim.lsp.util.make_position_params(0, client.offset_encoding))
@@ -92,6 +94,30 @@ function M.preview(buf)
   })
 end
 
+--- Opens the LaTeX log of the latest finished compile in a split.
+function M.log()
+  local client = client_for(vim.api.nvim_get_current_buf()) or vim.lsp.get_clients({ name = "ltxp" })[1]
+  if not client then
+    vim.notify("ltxp: not running; run :LtxpPreview first", vim.log.levels.ERROR)
+    return
+  end
+  client:request("workspace/executeCommand", { command = "ltxp.logPath", arguments = {} }, function(err, path)
+    if err or type(path) ~= "string" then
+      vim.notify("ltxp: no log yet: no compile has finished", vim.log.levels.WARN)
+      return
+    end
+    vim.cmd("split " .. vim.fn.fnameescape(path))
+    vim.bo.readonly = true
+    vim.cmd("normal! G")
+  end)
+end
+
+--- `arg`: "on", "off", or "" to toggle whether the preview follows the cursor.
+function M.set_sync(arg)
+  if arg == "on" then M.sync = true elseif arg == "off" then M.sync = false else M.sync = not M.sync end
+  vim.notify("ltxp: preview follows cursor: " .. (M.sync and "on" or "off"))
+end
+
 function M.stop()
   for _, c in ipairs(vim.lsp.get_clients({ name = "ltxp" })) do c:stop() end
   pcall(vim.api.nvim_del_augroup_by_name, "ltxp_attach")
@@ -102,6 +128,12 @@ function M.setup(opts)
   M.configured = true
   vim.api.nvim_create_user_command("LtxpPreview", function() M.preview() end, { desc = "Start ltxp and open the LaTeX preview" })
   vim.api.nvim_create_user_command("LtxpStop", M.stop, { desc = "Stop the ltxp LaTeX preview" })
+  vim.api.nvim_create_user_command("LtxpLog", M.log, { desc = "Open the latest LaTeX log" })
+  vim.api.nvim_create_user_command("LtxpSync", function(a) M.set_sync(a.args) end, {
+    nargs = "?",
+    complete = function() return { "on", "off" } end,
+    desc = "Toggle the preview following the cursor",
+  })
 end
 
 return M

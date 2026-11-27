@@ -684,7 +684,7 @@ impl Server {
                 self.send(json!({ "id": id, "result": {
                 "capabilities": {
                     "textDocumentSync": { "openClose": true, "change": 2, "save": true },
-                    "executeCommandProvider": { "commands": ["ltxp.forwardSearch", "ltxp.previewUrl"] },
+                    "executeCommandProvider": { "commands": ["ltxp.forwardSearch", "ltxp.previewUrl", "ltxp.logPath"] },
                 },
                 "serverInfo": { "name": "ltxp", "version": env!("CARGO_PKG_VERSION") },
             }}));
@@ -733,6 +733,13 @@ impl Server {
                     Some("ltxp.forwardSearch") => {
                         let args = &params["arguments"];
                         self.reveal(args[0].as_str().unwrap_or(""), &args[1]);
+                    }
+                    Some("ltxp.logPath") => {
+                        result = self.project.as_ref().and_then(|p| p.done.as_ref()).map_or(Value::Null, |d| {
+                            // Copy, since the run dir it lives in is garbage-collected.
+                            let log = copy_log(&d.dir);
+                            log.map_or(Value::Null, |l| l.display().to_string().into())
+                        })
                     }
                     Some("ltxp.previewUrl") => result = self.project.as_ref().map_or(Value::Null, |p| p.url.clone().into()),
                     _ => {}
@@ -894,6 +901,14 @@ fn bib_files(aux: &Path, root: &Path) -> Vec<PathBuf> {
         })
         .filter_map(|p| std::fs::canonicalize(p).ok())
         .collect()
+}
+
+/// Copies the log of the run in `dir` to `ltxp.log` in the run dir's parent, which garbage
+/// collection keeps; returns that path.
+fn copy_log(dir: &Path) -> Option<PathBuf> {
+    let dst = dir.parent()?.join("ltxp.log");
+    std::fs::copy(dir.join("main.log"), &dst).ok()?;
+    Some(dst)
 }
 
 /// The first few error messages in a TeX log: `FILE:LINE: MESSAGE` or `! MESSAGE` lines.

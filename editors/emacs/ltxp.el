@@ -1,7 +1,7 @@
 ;;; ltxp.el --- Instant LaTeX preview with exact two-way SyncTeX -*- lexical-binding: t -*-
 
 ;; URL: https://github.com/SichangHe/latex_live_preview
-;; Version: 0.0.5
+;; Version: 0.0.6
 ;; Package-Requires: ((emacs "29.1"))
 ;; SPDX-License-Identifier: UPL-1.0
 
@@ -30,9 +30,11 @@
 
 (defvar-local ltxp--timer nil)
 
+(defvar ltxp-sync t "Whether the preview follows point.")
+
 (defun ltxp--send-cursor (buffer)
   "Tell the server where point is in BUFFER."
-  (when (buffer-live-p buffer)
+  (when (and ltxp-sync (buffer-live-p buffer))
     (with-current-buffer buffer
       (when-let ((server (eglot-current-server)))
         (jsonrpc-notify server :ltxp/cursor
@@ -76,6 +78,22 @@
     (dolist (b (eglot--managed-buffers server))
       (with-current-buffer b (ltxp-mode 1)))
     (ltxp--open server)))
+
+(defun ltxp-log ()
+  "Open the LaTeX log of the latest finished compile."
+  (interactive)
+  (let* ((server (or (eglot-current-server) (user-error "ltxp: not running; run `ltxp-preview' first")))
+         (log (jsonrpc-request server :workspace/executeCommand '(:command "ltxp.logPath" :arguments []))))
+    (unless (stringp log) (user-error "ltxp: no log yet: no compile has finished"))
+    (find-file-other-window log)
+    (read-only-mode 1)
+    (goto-char (point-max))))
+
+(defun ltxp-toggle-sync ()
+  "Toggle whether the preview follows point."
+  (interactive)
+  (setq ltxp-sync (not ltxp-sync))
+  (message "ltxp: preview follows point: %s" (if ltxp-sync "on" "off")))
 
 (defun ltxp-stop ()
   "Stop the ltxp preview of this project."

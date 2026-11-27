@@ -2,7 +2,7 @@
   "name": "ltxp",
   "displayName": "ltxp: instant LaTeX preview",
   "description": "Instant LaTeX preview in the browser with exact two-way SyncTeX, via the ltxp language server.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "SichangHe",
   "license": "UPL-1.0",
   "repository": {
@@ -33,6 +33,14 @@
       {
         "command": "ltxp.forwardSearchHere",
         "title": "ltxp: Show cursor position in preview"
+      },
+      {
+        "command": "ltxp.openLog",
+        "title": "ltxp: Open LaTeX log"
+      },
+      {
+        "command": "ltxp.toggleSync",
+        "title": "ltxp: Toggle preview following the cursor"
       }
     ],
     "configuration": {

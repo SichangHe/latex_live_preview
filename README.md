@@ -25,9 +25,9 @@ cargo build --release   # target/release/ltxp and the LuaTeX module libltxpfork.
 
 Nothing starts when you open a file. In a `.tex` file, start the preview explicitly; it opens in your browser. ltxp finds the main file from `\documentclass`, a `% !TEX root = ../paper/main.tex` comment (path relative to the open file), or else by searching up to the git root for a file with `\documentclass` that `\input`s the open file. Relative paths (`\input{../sections/x}`, images, `\bibliography{../refs}`) resolve from the main file's folder, as with latexmk. If LaTeX fails, the error shows at the top of the preview and in the editor.
 
-- Neovim: `:LtxpPreview` starts it (again: reopens the browser), `:LtxpStop` stops it. The installer registers the plugin with lazy.nvim, loaded only when you run one of these. Options: `opts = { cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 }`.
-- Emacs (29+, built-in Eglot): `M-x ltxp-preview`, `M-x ltxp-stop`. The installer adds a loader to your init file; by hand, `(load "/path/to/ltxp.el")` then `(ltxp-setup)`.
-- VS Code / VSCodium: the commands "ltxp: Open preview" and "ltxp: Stop preview". Settings are `ltxp.path` and `ltxp.cursorDelayMs`.
+- Neovim: `:LtxpPreview` starts it (again: reopens the browser), `:LtxpStop` stops it, `:LtxpLog` opens the latest LaTeX log, `:LtxpSync [on|off]` toggles the preview following the cursor. The installer registers the plugin with lazy.nvim, loaded only when you run one of these. Options: `opts = { cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 }`.
+- Emacs (29+, built-in Eglot): `M-x ltxp-preview`, `M-x ltxp-stop`, `M-x ltxp-log`, `M-x ltxp-toggle-sync`. The installer adds a loader to your init file; by hand, `(load "/path/to/ltxp.el")` then `(ltxp-setup)`.
+- VS Code / VSCodium: the commands "ltxp: Open preview", "ltxp: Stop preview", "ltxp: Open LaTeX log" and "ltxp: Toggle preview following the cursor". Settings are `ltxp.path` and `ltxp.cursorDelayMs`.
 - Other editors: run `ltxp` as a language server for LaTeX. Forward search is the command `ltxp.forwardSearch` with arguments `[uri, position]`, or the notification `ltxp/cursor`.
 - No editor: `ltxp main.tex` previews the file and recompiles whenever files change on disk, like `latexmk -pvc`. Clicks print `file:line:column`.
 
