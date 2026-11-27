@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\section{Main}\label{sec:main}
+Main text before the sibling input, see Section~\ref{sec:intro}.
+\input{../sections/intro}
+\begin{figure}[h]\centering\includegraphics[width=2cm]{../figs/dot.png}\caption{Dot}\end{figure}
+\IfFileExists{../sections/intro.tex}{Found the sibling file.}{Missing the sibling file.}
+Cite \cite{knuth84}.
+\bibliographystyle{plain}
+\bibliography{../refs}
+\end{document}

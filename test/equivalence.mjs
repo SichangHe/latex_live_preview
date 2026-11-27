@@ -30,6 +30,7 @@ const fail = (m) => {
 };
 
 const DISK = process.env.LTXP_TEST_DISK === "1";
+process.on("exit", () => server.kill("SIGTERM"));
 const errLog = path.join(tmp, "ltxp.err");
 const server = spawn(path.join(ROOT, "target/release/ltxp"), DISK ? [mainFile] : [], { stdio: ["pipe", "pipe", fs.openSync(errLog, "w")] });
 const send = (msg) => {
@@ -116,7 +117,7 @@ function referenceText() {
   fs.cpSync(work, ref, { recursive: true });
   fs.writeFileSync(path.join(ref, editName), text);
   try {
-    execFileSync("latexmk", ["-lualatex", "-f", "-interaction=nonstopmode", mainName], { cwd: ref, stdio: "ignore", timeout: 300_000 });
+    execFileSync("latexmk", ["-lualatex", "-cd", "-f", "-interaction=nonstopmode", mainName], { cwd: ref, stdio: "ignore", timeout: 300_000 });
   } catch {}
   return pdfText(path.join(ref, mainName.replace(/\.tex$/, ".pdf")));
 }

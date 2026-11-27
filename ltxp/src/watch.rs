@@ -3,7 +3,7 @@
 use crate::Msg;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, SystemTime};
 
 const POLL: Duration = Duration::from_millis(300);
@@ -42,13 +42,31 @@ fn scan(root: &Path, want: fn(&Path) -> bool) -> HashMap<PathBuf, (SystemTime, u
     files
 }
 
-/// Sends `Msg::Fs(path)` for each file under `root` passing `want` that appears or changes.
-pub fn spawn(root: PathBuf, want: fn(&Path) -> bool, tx: Sender<Msg>) {
+/// Sends `Msg::Fs(path)` for each file under `root` passing `want` that appears or changes,
+/// and for each changing file received on `extra` (inputs outside `root`, e.g. `../x.tex`).
+pub fn spawn(root: PathBuf, want: fn(&Path) -> bool, extra: Receiver<PathBuf>, tx: Sender<Msg>) {
     std::thread::spawn(move || {
-        let mut seen = scan(&root, want);
+        let mut extras: Vec<PathBuf> = vec![];
+        let stamp = |p: &Path| {
+            std::fs::metadata(p)
+                .ok()
+                .map(|m| (m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len()))
+        };
+        let scan_all = |extras: &[PathBuf]| {
+            let mut files = scan(&root, want);
+            files.extend(extras.iter().filter_map(|p| Some((p.clone(), stamp(p)?))));
+            files
+        };
+        let mut seen = scan_all(&extras);
         loop {
             std::thread::sleep(POLL);
-            let now = scan(&root, want);
+            for p in extra.try_iter() {
+                if let Some(s) = stamp(&p) {
+                    seen.insert(p.clone(), s);
+                }
+                extras.push(p);
+            }
+            let now = scan_all(&extras);
             for (path, stamp) in &now {
                 if seen.get(path) != Some(stamp) && tx.send(Msg::Fs(path.clone())).is_err() {
                     return;

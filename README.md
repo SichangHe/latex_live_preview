@@ -23,7 +23,7 @@ cargo build --release   # target/release/ltxp and the LuaTeX module libltxpfork.
 
 ## Use
 
-Nothing starts when you open a file. In a `.tex` file, start the preview explicitly; it opens in your browser. ltxp finds the main file from `\documentclass`, a `% !TEX root = main.tex` comment, or a file in the same or parent folder that has `\documentclass` and mentions the open file.
+Nothing starts when you open a file. In a `.tex` file, start the preview explicitly; it opens in your browser. ltxp finds the main file from `\documentclass`, a `% !TEX root = ../paper/main.tex` comment (path relative to the open file), or else by searching up to the git root for a file with `\documentclass` that `\input`s the open file. Relative paths (`\input{../sections/x}`, images, `\bibliography{../refs}`) resolve from the main file's folder, as with latexmk. If LaTeX fails, the error shows at the top of the preview and in the editor.
 
 - Neovim: `:LtxpPreview` starts it (again: reopens the browser), `:LtxpStop` stops it. The installer registers the plugin with lazy.nvim, loaded only when you run one of these. Options: `opts = { cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 }`.
 - Emacs (29+, built-in Eglot): `M-x ltxp-preview`, `M-x ltxp-stop`. The installer adds a loader to your init file; by hand, `(load "/path/to/ltxp.el")` then `(ltxp-setup)`.

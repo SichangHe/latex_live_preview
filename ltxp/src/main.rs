@@ -22,6 +22,10 @@ use std::time::{Duration, SystemTime};
 
 /// Like latexmk's default `$max_repeat`; reruns stop earlier once aux files are stable.
 const MAX_AUTO_RERUNS: u32 = 5;
+/// How many parent folders to search for the main file of a sub-file.
+const MAIN_SEARCH_UP: usize = 4;
+/// Stop the main-file search after this many `.tex` files.
+const MAIN_SEARCH_FILES: usize = 2000;
 const GC_INTERVAL: Duration = Duration::from_secs(10);
 /// Extensions of files whose change on disk recompiles.
 const WATCHED_EXTS: [&str; 20] = [
@@ -165,6 +169,12 @@ fn handle_signals(tx: Sender<Msg>) {
 struct Project {
     /// viewer address
     url: String,
+    /// TeX inputs outside `root` for the watcher to poll
+    watch_extra: Sender<PathBuf>,
+    /// `.bib` files outside `root` already sent to the watcher
+    watched_bibs: HashSet<PathBuf>,
+    /// last `errors` message, replayed to viewers that connect later
+    errors: Value,
     main_tex: PathBuf,
     root: PathBuf,
     run_dir: PathBuf,
@@ -251,6 +261,9 @@ impl Server {
                 let Some(p) = &mut self.project else { return };
                 let pdf = p.engine.on_event(&line);
                 for f in p.engine.take_new_inputs() {
+                    if !f.starts_with(&p.root) && !f.to_string_lossy().contains("/texmf") {
+                        let _ = p.watch_extra.send(f.clone());
+                    }
                     if let Ok(t) = std::fs::read_to_string(&f) {
                         p.disk_text.entry(f).or_insert(t);
                     }
@@ -267,6 +280,11 @@ impl Server {
                     .flatten()
                     .map(|pdf| format!("data: {}\n\n", pdf_msg(pdf, 1)))
                     .collect();
+                let replay = if p.errors.is_null() {
+                    replay
+                } else {
+                    format!("{replay}data: {}\n\n", p.errors)
+                };
                 if s.write_all(replay.as_bytes()).is_ok() {
                     p.clients.push(s);
                 }
@@ -345,9 +363,13 @@ impl Server {
             listener.local_addr().map_or(0, |a| a.port())
         );
         http::serve(listener, run_dir.clone(), self.tx.clone());
-        watch::spawn(root.clone(), watched, self.tx.clone());
+        let (watch_tx, watch_rx) = channel();
+        watch::spawn(root.clone(), watched, watch_rx, self.tx.clone());
         let mut p = Project {
             url: url.clone(),
+            watch_extra: watch_tx,
+            watched_bibs: HashSet::new(),
+            errors: Value::Null,
             main_tex,
             root,
             run_dir,
@@ -402,6 +424,19 @@ impl Server {
             return;
         }
         p.done = Some(pdf.clone());
+        for bib in bib_files(&pdf.dir.join("main.aux"), &p.root) {
+            if !bib.starts_with(&p.root) && p.watched_bibs.insert(bib.clone()) {
+                let _ = p.watch_extra.send(bib);
+            }
+        }
+        let errors = log_errors(&pdf.dir.join("main.log"));
+        let no_pdf = !pdf.dir.join("main.pdf").is_file();
+        p.errors = json!({ "type": "errors", "messages": errors, "noPdf": no_pdf });
+        p.broadcast(&p.errors.clone());
+        if no_pdf {
+            let first = errors.first().map_or("see the log", String::as_str);
+            self.show_message(1, &format!("ltxp: LaTeX produced no PDF: {first}"));
+        }
         self.publish_diagnostics(&pdf.dir);
         self.rerun_if_stale(&pdf, false);
     }
@@ -417,7 +452,7 @@ impl Server {
                 continue;
             };
             let file = p.root.join(file).components().collect::<PathBuf>();
-            if !file.starts_with(&p.root) {
+            if !file.is_file() || file.to_string_lossy().contains("/texmf") {
                 continue;
             }
             let range = json!({ "start": { "line": l.saturating_sub(1), "character": 0 }, "end": { "line": l.saturating_sub(1), "character": 1000 } });
@@ -460,10 +495,19 @@ impl Server {
             p.root.clone(),
         );
         std::thread::spawn(move || {
-            let inputs = format!("{}:", root.display());
-            let _ = Command::new(bib)
-                .arg("main")
-                .current_dir(&dir)
+            // The run dir holds files the document writes itself (`filecontents`).
+            let inputs = format!("{}:{}:", dir.display(), root.display());
+            // bibtex runs in the project dir like a normal build, so `\bibliography{../refs}`
+            // resolves there, and writes `main.bbl` next to the run's `main.aux`.
+            let mut cmd = Command::new(bib);
+            if bib == "bibtex" {
+                cmd.arg(dir.join("main"))
+                    .current_dir(&root)
+                    .env("openout_any", "a");
+            } else {
+                cmd.arg("main").current_dir(&dir);
+            }
+            let _ = cmd
                 .env("BIBINPUTS", &inputs)
                 .env("BSTINPUTS", &inputs)
                 .output();
@@ -771,26 +815,98 @@ fn has_documentclass(text: &str) -> bool {
     })
 }
 
-/// A `.tex` file with `\documentclass` in this or the parent directory that mentions `file`'s
-/// name, e.g. through `\input{chap}`: the main file of a sub-file opened alone.
+/// The main file of a sub-file opened alone: a `.tex` file with `\documentclass` that refers to
+/// `file` by its relative path (e.g. `\input{../sections/intro}`), else one that mentions its
+/// name. Searches folders up to the git root (at most `MAIN_SEARCH_UP` levels), nearest first.
 fn find_includer(file: &Path) -> Option<PathBuf> {
     let stem = file.file_stem()?.to_str()?;
-    let dir = file.parent()?;
-    for d in [Some(dir), dir.parent()].into_iter().flatten() {
-        for e in std::fs::read_dir(d).ok()?.flatten() {
-            let p = e.path();
-            if p == file || p.extension().is_none_or(|x| x != "tex") {
-                continue;
-            }
-            let Ok(t) = std::fs::read_to_string(&p) else {
+    let mut by_name = None;
+    let mut seen = HashSet::new();
+    for (up, dir) in file.ancestors().skip(1).enumerate() {
+        if up > MAIN_SEARCH_UP {
+            break;
+        }
+        for cand in tex_files(dir, &mut seen) {
+            let Ok(t) = std::fs::read_to_string(&cand) else {
                 continue;
             };
-            if has_documentclass(&t) && t.contains(stem) {
-                return Some(std::fs::canonicalize(&p).unwrap_or(p));
+            if cand == file || !has_documentclass(&t) || !t.contains(stem) {
+                continue;
+            }
+            let rel = relative(cand.parent()?, &file.with_extension(""));
+            if t.contains(&rel) {
+                return Some(cand);
+            }
+            by_name.get_or_insert(cand);
+        }
+        if dir.join(".git").exists() {
+            break;
+        }
+    }
+    by_name
+}
+
+/// `.tex` files under `dir` (depth ≤ 3, non-hidden) not in `seen`, which collects them.
+fn tex_files(dir: &Path, seen: &mut HashSet<PathBuf>) -> Vec<PathBuf> {
+    let (mut out, mut stack) = (vec![], vec![(dir.to_path_buf(), 0)]);
+    while let Some((d, depth)) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if e.file_name().as_encoded_bytes().starts_with(b".") || seen.len() > MAIN_SEARCH_FILES
+            {
+                continue;
+            }
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                if depth < 3 {
+                    stack.push((p, depth + 1));
+                }
+            } else if p.extension().is_some_and(|x| x == "tex") && seen.insert(p.clone()) {
+                out.push(p);
             }
         }
     }
-    None
+    out
+}
+
+/// `to` relative to directory `from`, with `/` separators, e.g. `../sections/intro`.
+fn relative(from: &Path, to: &Path) -> String {
+    let (f, t): (Vec<_>, Vec<_>) = (from.components().collect(), to.components().collect());
+    let common = f.iter().zip(&t).take_while(|(a, b)| a == b).count();
+    let ups = std::iter::repeat_n("..".to_string(), f.len() - common);
+    let downs = t[common..]
+        .iter()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+    ups.chain(downs).collect::<Vec<_>>().join("/")
+}
+
+/// `.bib` files named by `\bibdata{a,b}` in `aux`, relative to the project dir `root`.
+fn bib_files(aux: &Path, root: &Path) -> Vec<PathBuf> {
+    let aux = std::fs::read_to_string(aux).unwrap_or_default();
+    aux.lines()
+        .filter_map(|l| l.strip_prefix("\\bibdata{")?.strip_suffix('}'))
+        .flat_map(|names| names.split(','))
+        .map(|n| {
+            root.join(if n.ends_with(".bib") {
+                n.to_string()
+            } else {
+                format!("{n}.bib")
+            })
+        })
+        .filter_map(|p| std::fs::canonicalize(p).ok())
+        .collect()
+}
+
+/// The first few error messages in a TeX log: `FILE:LINE: MESSAGE` or `! MESSAGE` lines.
+fn log_errors(log: &Path) -> Vec<String> {
+    let log = std::fs::read(log).unwrap_or_default();
+    String::from_utf8_lossy(&log)
+        .lines()
+        .filter_map(|l| match parse_error(l) {
+            Some((file, line, msg)) => Some(format!("{file}:{line}: {msg}")),
+            None => l.strip_prefix("! ").map(str::to_string),
+        })
+        .take(5)
+        .collect()
 }
 
 /// `FILE:LINE: MESSAGE` from a `-file-line-error` log line.

@@ -203,6 +203,14 @@ async function reveal({ page, box, before, after }) {
   p.el.append(marker);
 }
 
+/** Shows the last finished run's LaTeX errors above the pages; hidden when there are none. */
+function showErrors({ messages, noPdf }) {
+  const el = document.getElementById("errors");
+  const head = noPdf ? "LaTeX produced no PDF." : "LaTeX reported errors; the preview may be incomplete.";
+  el.textContent = messages.length || noPdf ? [head, ...messages].join("\n") : "";
+  el.hidden = !el.textContent;
+}
+
 document.addEventListener("click", onClick);
 addEventListener("keydown", (e) => {
   const z = { "+": userZoom * 1.2, "=": userZoom * 1.2, "-": userZoom / 1.2, 0: 1 }[e.key];
@@ -222,4 +230,5 @@ es.onmessage = (e) => {
   const msg = JSON.parse(e.data);
   if (msg.type === "pdf") load(msg);
   else if (msg.type === "reveal") reveal(msg);
+  else if (msg.type === "errors") showErrors(msg);
 };

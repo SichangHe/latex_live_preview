@@ -45,6 +45,30 @@ local function emit(...)
   ev:write(table.concat({ gen, ... }, " "), "\n")
 end
 
+local function is_file(path)
+  return lfs.attributes(path, "mode") == "file"
+end
+
+--- Where a file TeX asks for really is. Like a normal build in the project dir: this run's
+--- own outputs (`main.aux`, ...) in the cwd first, then paths relative to the project dir
+--- (so `\input{../sections/x}` works), then the usual kpathsea search.
+local function resolve(name, kpse_type)
+  if name:sub(1, 1) == "/" then return is_file(name) and name or nil end
+  for _, n in ipairs({ name, name .. ".tex" }) do
+    if is_file(n) then return n end
+    if is_file(project .. "/" .. n) then return project .. "/" .. n end
+  end
+  return kpse.find_file(name, kpse_type)
+end
+
+luatexbase.add_to_callback("find_read_file", function(_, name)
+  return resolve(name, "tex")
+end, "ltxp.find_read_file")
+
+luatexbase.add_to_callback("find_image_file", function(name)
+  return resolve(name, "graphic/figure") or name
+end, "ltxp.find_image_file")
+
 --- Serves every input file from memory so a resumed snapshot can swap in new content
 --- while keeping its line position.
 luatexbase.add_to_callback("open_read_file", function(name)

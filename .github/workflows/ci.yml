@@ -27,6 +27,7 @@ jobs:
           cd test
           node equivalence.mjs multifile main.tex chap.tex
           LTXP_TEST_DISK=1 node equivalence.mjs multifile main.tex chap.tex
+          node equivalence.mjs sibling paper/main.tex sections/intro.tex
       - name: logs on failure
         if: failure()
         run: tail -n 40 "${TMPDIR:-/tmp}"/ltxp-eq-*/ltxp.err || true
