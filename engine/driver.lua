@@ -53,11 +53,15 @@ end
 --- own outputs (`main.aux`, ...) in the cwd first, then paths relative to the project dir
 --- (so `\input{../sections/x}` works), then the usual kpathsea search.
 local function resolve(name, kpse_type)
-  if name:sub(1, 1) == "/" then return is_file(name) and name or nil end
   for _, n in ipairs({ name, name .. ".tex" }) do
-    if is_file(n) then return n end
-    if is_file(project .. "/" .. n) then return project .. "/" .. n end
+    if n:sub(1, 1) == "/" then
+      if is_file(n) then return n end
+    else
+      if is_file(n) then return n end
+      if is_file(project .. "/" .. n) then return project .. "/" .. n end
+    end
   end
+  if name:sub(1, 1) == "/" then return nil end
   return kpse.find_file(name, kpse_type)
 end
 
