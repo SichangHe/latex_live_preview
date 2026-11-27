@@ -32,13 +32,12 @@ driver
 - events go to FIFO `ev` as `GEN KIND ...` lines
 
 output isolation
-- TeX runs with `-output-directory=/proc/self/fd/200`
-    - each process's own fd 200 decides where its outputs go
-    - `bash -c 'exec 200<DIR; exec lualatex ...'` sets it for cold gens
-- detach: dup a new dir onto fd 200; copy every writable file's prefix (up to the offset recorded at fork) into it and dup it over the old fd
-    - names and offsets are recorded at fork: the parent may later rename (`main.synctex(busy)`) or delete files
+- each TeX process works in its own output dir (its cwd), so outputs never collide
+    - cold gens start there; `TEXINPUTS` puts the output dir, then the project, first
+- detach: chdir into a new dir; copy every writable file's prefix (up to the offset recorded at fork, through a read handle opened before the fork) into it and dup it over the old fd
+    - names, offsets and read handles are taken at fork: the parent may later rename (`main.synctex(busy)`) or delete files
     - works because TeX's outputs are append-only
-- cwd stays the project dir, like a normal build, so shell-escape artifacts (e.g. `epstopdf`) are shared
+- the driver wraps `os.execute`/`io.popen`/... to `cd` into the project first, so shell-escape tools run and write there as in a normal build
 
 server-side engine
 - edit(file, line): resume the latest non-stale snapshot; drop stale ones after sending `go`
@@ -48,13 +47,13 @@ server-side engine
 - snapshots ~5 MB each: above `LTXP_MAX_SNAPS` (400) keep only pages divisible by a doubling stride
 
 server (`ltxp/src/main.rs`): one actor thread owns all state
-- stdin (LSP), event FIFO, HTTP connections, inotify, timers, SyncTeX workers send it `Msg`s
+- stdin (LSP), event FIFO, HTTP connections, timers, SyncTeX workers send it `Msg`s
 - SIGTERM/SIGHUP/SIGINT and stdin EOF kill all process groups and remove the run dir
 - auto rerun after `done` when aux files changed vs seed, at most `MAX_AUTO_RERUNS` in a row
     - runs `bibtex`/`biber` first when needed; saving a `.bib` forces this
 - diagnostics: `-file-line-error` lines of the done log
 - GC of old run dirs every 10 s
-- disk changes (`ltxp/src/watch.rs`): inotify on the project dir and non-hidden subdirs (depth ≤ 4, ≤ 512 dirs)
+- disk changes (`ltxp/src/watch.rs`): polls mtime+size every 300 ms under the project dir (non-hidden, depth ≤ 4, ≤ 512 dirs); portable to macOS
     - only watched extensions; files open in the editor are skipped, since the editor buffer wins
     - unchanged content (hash) is ignored, so tools rewriting identical files cause no loop
     - TeX input → incremental edit from the first changed line; `.bib` → bibtex/biber rerun; other → cold gen seeded with the last done aux files

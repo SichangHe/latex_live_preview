@@ -7,28 +7,31 @@ ltxp is a language server written in Rust. Each edit recompiles only from the ed
 
 ## Install
 
-You need Linux and TeX Live with `lualatex` and `synctex`.
+You need Linux or macOS, and TeX Live (MacTeX on macOS) with `lualatex` and `synctex`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SichangHe/latex_live_preview/main/install.sh | sh
 ```
 
-This installs `ltxp` into `~/.local/bin` and the Neovim plugin into Neovim's package path. Opening a `.tex` file then starts the preview, with no configuration needed.
+This installs `ltxp` into `~/.local/bin`. In a terminal, the installer then asks which editors to set up: Neovim, Emacs (29+), VS Code, or VSCodium. To choose directly, replace `sh` with `sh -s -- --editor nvim` (or `emacs`, `code`, `codium`); repeat `--editor` for several, or pass `--no-editor`. Add `--dir DIR` to install elsewhere, or `--release TAG` for another release.
 
 To build from source, which needs Rust and `curl`:
 
 ```sh
-cargo build --release   # target/release/ltxp and target/release/libltxpfork.so
+cargo build --release   # target/release/ltxp and the LuaTeX module libltxpfork.so/.dylib
 ```
 
 ## Use
 
-- Neovim: open a `.tex` file that has `\documentclass`, or a `% !TEX root = main.tex` comment. The viewer opens in your browser, and its URL is also shown as a message.
-  - Options: `require("ltxp").setup({ cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 })`. Set `vim.g.ltxp_disable = true` to turn the plugin off.
-- Other editors: run `ltxp` as a language server for LaTeX. Without the Neovim plugin, forward search is the command `ltxp.forwardSearch` with arguments `[uri, position]`.
+Open a `.tex` file in your editor. The preview opens in your browser, and its URL is also shown as a message. ltxp finds the main file from `\documentclass`, a `% !TEX root = main.tex` comment, or a file in the same or parent folder that has `\documentclass` and mentions the open file.
+
+- Neovim: the installer sets everything up. To configure it yourself: `require("ltxp").setup({ cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 })`. Set `vim.g.ltxp_disable = true` to turn it off.
+- Emacs: uses the built-in Eglot. The installer adds a loader to your init file; by hand, `(load "/path/to/ltxp.el")` then `(ltxp-setup)`.
+- VS Code / VSCodium: the `ltxp` extension. Settings are `ltxp.path` and `ltxp.cursorDelayMs`.
+- Other editors: run `ltxp` as a language server for LaTeX. Forward search is the command `ltxp.forwardSearch` with arguments `[uri, position]`, or the notification `ltxp/cursor`.
 - No editor: `ltxp main.tex` previews the file and recompiles whenever files change on disk, like `latexmk -pvc`. Clicks print `file:line:column`.
 
-Changes on disk are picked up in every mode, including `\input` files, images, `.bib` files and packages in the project directory. In the editor, open files update on every keystroke, without saving.
+Changes on disk are picked up in every mode, including `\input` files, images, `.bib` files and packages in the project folder. In the editor, open files update on every keystroke, without saving.
 
 Viewer keys: `+`, `-` and `0` zoom.
 
