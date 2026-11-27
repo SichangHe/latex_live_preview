@@ -74,7 +74,9 @@ lib="$dir/../lib/ltxp"
 mkdir -p "$lib"
 lib=$(cd "$lib" && pwd)
 # Replace rather than overwrite, so a running ltxp keeps its files.
-for f in "$work"/pkg/libltxpfork.*; do mv -f "$f" "$lib/"; done
+for f in libltxpfork.so libltxpfork.dylib; do
+    [ ! -e "$work/pkg/$f" ] || mv -f "$work/pkg/$f" "$lib/$f"
+done
 mv -f "$work/pkg/ltxp" "$dir/ltxp"
 chmod 755 "$dir/ltxp"
 echo "Installed $("$dir/ltxp" --version) to $dir/ltxp"

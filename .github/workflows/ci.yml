@@ -38,3 +38,22 @@ jobs:
         with:
           name: equivalence-dirs
           path: eq
+  macos-install:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install TeX
+        run: |
+          brew install --cask basictex
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
+      - name: install the latest release with install.sh
+        run: sh install.sh --no-editor
+      - name: compile a document with the installed ltxp
+        run: |
+          export PATH="$HOME/.local/bin:$PATH" LTXP_PORT=47313
+          ltxp test/multifile/main.tex 2> ltxp.err &
+          curl -sN --retry 30 --retry-connrefused --retry-delay 1 --max-time 120 http://127.0.0.1:47313/events | grep -m1 '"kind":"done"'
+          kill %1
+      - name: logs on failure
+        if: failure()
+        run: cat ltxp.err || true
