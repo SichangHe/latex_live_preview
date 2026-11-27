@@ -19,6 +19,8 @@ jobs:
           sudo /Library/TeX/texbin/tlmgr install latexmk
       - run: cargo clippy --release --locked -- -D warnings
       - run: cargo build --release --locked
+      - name: warm up TeX caches
+        run: cd test/multifile && latexmk -lualatex -interaction=nonstopmode main.tex >/dev/null && latexmk -C
       - name: equivalence (editor and disk edits)
         run: |
           cd test

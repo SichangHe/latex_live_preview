@@ -9,8 +9,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - { arch: x86_64, os: ubuntu-22.04 }
-          - { arch: aarch64, os: ubuntu-22.04-arm }
+          - { platform: x86_64-linux, os: ubuntu-22.04 }
+          - { platform: aarch64-linux, os: ubuntu-22.04-arm }
+          - { platform: aarch64-macos, os: macos-14 }
+          - { platform: x86_64-macos, os: macos-13 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -20,20 +22,31 @@ jobs:
       - run: cargo build --release --locked
       - name: package
         run: |
-          mkdir -p dist/pkg
-          cp target/release/ltxp target/release/libltxpfork.so dist/pkg/
-          cp -r editors/nvim dist/pkg/nvim
-          tar -czf dist/ltxp-${{ matrix.arch }}-linux.tar.gz -C dist/pkg .
+          mkdir -p dist/pkg/emacs
+          cp target/release/ltxp target/release/libltxpfork.* dist/pkg/
+          rm -f dist/pkg/libltxpfork.d dist/pkg/libltxpfork.rlib
+          cp -R editors/nvim dist/pkg/nvim
+          cp editors/emacs/ltxp.el dist/pkg/emacs/
+          tar -czf dist/ltxp-${{ matrix.platform }}.tar.gz -C dist/pkg .
       - uses: actions/upload-artifact@v4
         with:
-          name: ltxp-${{ matrix.arch }}
+          name: ltxp-${{ matrix.platform }}
           path: dist/*.tar.gz
+  vsix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cd editors/vscode && npm ci && npx --yes @vscode/vsce@3.6.0 package -o ../../ltxp.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ltxp-vsix
+          path: ltxp.vsix
   release:
-    needs: build
+    needs: [build, vsix]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with: { merge-multiple: true }
-      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes ltxp-*.tar.gz
+      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes ltxp-*.tar.gz ltxp.vsix
         env:
           GH_TOKEN: ${{ github.token }}

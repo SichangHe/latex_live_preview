@@ -714,20 +714,44 @@ fn find_main(file: &Path, text: &str) -> Option<PathBuf> {
         else {
             continue;
         };
-        {
-            let root = root.trim();
-            let p = file.parent()?.join(root);
-            return Some(std::fs::canonicalize(&p).unwrap_or(p));
+        let p = file.parent()?.join(root.trim());
+        return Some(std::fs::canonicalize(&p).unwrap_or(p));
+    }
+    if has_documentclass(text) {
+        return Some(file.to_path_buf());
+    }
+    find_includer(file)
+}
+
+fn has_documentclass(text: &str) -> bool {
+    text.lines().any(|l| {
+        l.split('%')
+            .next()
+            .unwrap_or("")
+            .contains("\\documentclass")
+    })
+}
+
+/// A `.tex` file with `\documentclass` in this or the parent directory that mentions `file`'s
+/// name, e.g. through `\input{chap}`: the main file of a sub-file opened alone.
+fn find_includer(file: &Path) -> Option<PathBuf> {
+    let stem = file.file_stem()?.to_str()?;
+    let dir = file.parent()?;
+    for d in [Some(dir), dir.parent()].into_iter().flatten() {
+        for e in std::fs::read_dir(d).ok()?.flatten() {
+            let p = e.path();
+            if p == file || p.extension().is_none_or(|x| x != "tex") {
+                continue;
+            }
+            let Ok(t) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            if has_documentclass(&t) && t.contains(stem) {
+                return Some(std::fs::canonicalize(&p).unwrap_or(p));
+            }
         }
     }
-    text.lines()
-        .any(|l| {
-            l.split('%')
-                .next()
-                .unwrap_or("")
-                .contains("\\documentclass")
-        })
-        .then(|| file.to_path_buf())
+    None
 }
 
 /// `FILE:LINE: MESSAGE` from a `-file-line-error` log line.

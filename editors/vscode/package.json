@@ -1,0 +1,24 @@
+{
+  "name": "ltxp",
+  "displayName": "ltxp: instant LaTeX preview",
+  "description": "Instant LaTeX preview in the browser with exact two-way SyncTeX, via the ltxp language server.",
+  "version": "0.0.2",
+  "publisher": "SichangHe",
+  "license": "UPL-1.0",
+  "repository": { "type": "git", "url": "https://github.com/SichangHe/latex_live_preview" },
+  "engines": { "vscode": "^1.82.0" },
+  "categories": ["Programming Languages", "Visualization"],
+  "activationEvents": ["onLanguage:latex", "onLanguage:tex"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [{ "command": "ltxp.forwardSearchHere", "title": "ltxp: Show cursor position in preview" }],
+    "configuration": {
+      "title": "ltxp",
+      "properties": {
+        "ltxp.path": { "type": "string", "default": "", "description": "Path to the ltxp executable; empty searches PATH and ~/.local/bin." },
+        "ltxp.cursorDelayMs": { "type": "number", "default": 100, "description": "Delay before moving the preview marker after the cursor moves." }
+      }
+    }
+  },
+  "dependencies": { "vscode-languageclient": "9.0.1" }
+}
