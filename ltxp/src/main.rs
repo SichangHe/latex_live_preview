@@ -6,6 +6,7 @@ mod engine;
 mod http;
 mod lsp;
 mod sync;
+mod uninstall;
 mod watch;
 
 use engine::{Engine, Kind, Pdf, seed_sig};
@@ -37,6 +38,7 @@ const USAGE: &str = "ltxp: instant LaTeX preview in the browser
 usage:
   ltxp            run as a language server on stdin/stdout (for editors)
   ltxp FILE.tex   preview FILE.tex without an editor, recompiling on file changes
+  ltxp uninstall [--yes]   remove everything the installer set up (asks first)
   ltxp --version
 
 env: LTXP_PORT (viewer port, default random), LTXP_MAX_SNAPS (default 400)";
@@ -65,6 +67,12 @@ fn main() {
     match arg.as_deref() {
         Some("--version" | "-V") => return println!("ltxp {}", env!("CARGO_PKG_VERSION")),
         Some("--help" | "-h") => return println!("{USAGE}"),
+        Some("uninstall") => {
+            let yes = std::env::args()
+                .nth(2)
+                .is_some_and(|a| a == "--yes" || a == "-y");
+            std::process::exit(uninstall::uninstall(yes));
+        }
         _ => {}
     }
     let Some(native) = find_native() else {

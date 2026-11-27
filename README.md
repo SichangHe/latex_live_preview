@@ -15,6 +15,8 @@ curl -fsSL https://raw.githubusercontent.com/SichangHe/latex_live_preview/main/i
 
 This installs `ltxp` into `~/.local/bin`. In a terminal, the installer then asks which editors to set up: Neovim, Emacs (29+), VS Code, or VSCodium. To choose directly, replace `sh` with `sh -s -- --editor nvim` (or `emacs`, `code`, `codium`); repeat `--editor` for several, or pass `--no-editor`. Add `--dir DIR` to install elsewhere, or `--release TAG` for another release.
 
+To remove everything the installer set up (the binary, plugin files, the lazy.nvim spec, the Emacs loader line and the VS Code extension), run `ltxp uninstall`. It lists what it will remove and asks first; `--yes` skips the question.
+
 To build from source, which needs Rust and `curl`:
 
 ```sh

@@ -2,7 +2,7 @@
   "name": "ltxp",
   "displayName": "ltxp: instant LaTeX preview",
   "description": "Instant LaTeX preview in the browser with exact two-way SyncTeX, via the ltxp language server.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "SichangHe",
   "license": "UPL-1.0",
   "repository": {
