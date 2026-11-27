@@ -29,3 +29,11 @@ jobs:
       - name: logs on failure
         if: failure()
         run: tail -n 40 "${TMPDIR:-/tmp}"/ltxp-eq-*/ltxp.err || true
+      - name: keep test dirs on failure
+        if: failure()
+        run: mkdir -p eq && cp -R "${TMPDIR:-/tmp}"/ltxp-eq-* eq/ || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: equivalence-dirs
+          path: eq
