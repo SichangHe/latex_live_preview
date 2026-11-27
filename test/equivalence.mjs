@@ -13,7 +13,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const SETTLE_MS = 4000;
+/** Quiet time that counts as settled; slow machines need more, since bibtex runs emit nothing. */
+const SETTLE_MS = Number(process.env.LTXP_TEST_SETTLE_MS ?? 4000);
 const [srcDir, mainName, editName = mainName] = process.argv.slice(2);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ltxp-eq-"));
 const work = path.join(tmp, "work");

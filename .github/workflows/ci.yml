@@ -22,6 +22,7 @@ jobs:
       - name: warm up TeX caches
         run: cd test/multifile && latexmk -lualatex -interaction=nonstopmode main.tex >/dev/null && latexmk -C
       - name: equivalence (editor and disk edits)
+        env: { LTXP_TEST_SETTLE_MS: "15000" }
         run: |
           cd test
           node equivalence.mjs multifile main.tex chap.tex
