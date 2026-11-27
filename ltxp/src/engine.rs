@@ -221,10 +221,26 @@ impl Engine {
                 let _ = fs::copy(e.path(), dir.join(e.file_name()));
             }
         }
-        let mut spawned = Command::new("bash");
+        let project = self.main_tex.parent().unwrap_or(Path::new("/"));
+        // Inputs: aux files in the output dir first, then the project, then the usual paths.
+        let texinputs = format!(
+            ".:{}:{}",
+            project.display(),
+            std::env::var("TEXINPUTS").unwrap_or_default()
+        );
+        let mut spawned = Command::new("lualatex");
         spawned
-            .args(["-c", r#"exec 200<"$LTXP_OUT" && exec lualatex --shell-escape -synctex=-1 -interaction=nonstopmode -file-line-error -jobname=main -output-directory=/proc/self/fd/200 '\directlua{dofile(os.getenv("LTXP_DRIVER"))}'"#])
-            .current_dir(self.main_tex.parent().unwrap_or(Path::new("/")))
+            .args([
+                "--shell-escape",
+                "-synctex=-1",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-jobname=main",
+                r#"\directlua{dofile(os.getenv("LTXP_DRIVER"))}"#,
+            ])
+            .current_dir(&dir)
+            .env("TEXINPUTS", texinputs)
+            .env("LTXP_PROJECT", project)
             .env("LTXP_NATIVE", &self.native)
             .env("LTXP_EVENTS", self.run_dir.join("ev"))
             .env("LTXP_RUN", &self.run_dir)
@@ -232,7 +248,6 @@ impl Engine {
             .env("LTXP_DRIVER", self.run_dir.join("driver.lua"))
             .env("LTXP_MAIN", &self.main_tex)
             .env("LTXP_GEN", self.generation.to_string())
-            .env("LTXP_OUT", &dir)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -331,7 +346,9 @@ impl Engine {
         }
         let p = fs::canonicalize(name).unwrap_or_else(|_| PathBuf::from(name));
         self.canonical.insert(name.into(), p.clone());
-        self.new_inputs.push(p.clone());
+        if !p.starts_with(&self.run_dir) {
+            self.new_inputs.push(p.clone());
+        }
         p
     }
 
@@ -373,11 +390,14 @@ impl Engine {
                 }
                 self.drop_snap(page);
                 let mr = rest.splitn(3, ' ').nth(2).unwrap_or("");
-                let max_read = mr
+                let max_read: HashMap<PathBuf, usize> = mr
                     .split('\t')
                     .filter_map(|kv| kv.rsplit_once(':'))
-                    .filter(|(f, _)| !f.starts_with("/proc/"))
                     .filter_map(|(f, n)| Some((self.canonical(f), n.parse().ok()?)))
+                    .collect();
+                let max_read = max_read
+                    .into_iter()
+                    .filter(|(f, _)| !f.starts_with(&self.run_dir))
                     .collect();
                 self.snaps.insert(
                     page,

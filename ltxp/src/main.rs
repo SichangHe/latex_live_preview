@@ -11,7 +11,6 @@ mod watch;
 use engine::{Engine, Kind, Pdf, seed_sig};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
@@ -43,8 +42,8 @@ pub enum Msg {
     Ev(String),
     Sse(TcpStream),
     Click(Value),
-    /// inotify event: watch descriptor, name, whether it is a directory
-    Fs(i32, OsString, bool),
+    /// a project file appeared or changed on disk
+    Fs(PathBuf),
     Tick,
     Watchdog(u64),
     BibDone(u64, PathBuf),
@@ -64,7 +63,9 @@ fn main() {
         _ => {}
     }
     let Some(native) = find_native() else {
-        return log("cannot find libltxpfork.so next to the ltxp binary; set LTXP_NATIVE");
+        return log(&format!(
+            "cannot find {NATIVE} next to the ltxp binary; set LTXP_NATIVE"
+        ));
     };
     let (tx, rx) = channel();
     handle_signals(tx.clone());
@@ -111,19 +112,23 @@ fn main() {
     }
 }
 
-/// `LTXP_NATIVE`, else `libltxpfork.so` next to the binary or in `../lib/ltxp/`.
+/// File name of the LuaTeX module built by `ltxpfork`.
+const NATIVE: &str = if cfg!(target_os = "macos") {
+    "libltxpfork.dylib"
+} else {
+    "libltxpfork.so"
+};
+
+/// `LTXP_NATIVE`, else `NATIVE` next to the binary or in `../lib/ltxp/`.
 fn find_native() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("LTXP_NATIVE") {
         return Some(p.into());
     }
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    [
-        dir.join("libltxpfork.so"),
-        dir.join("../lib/ltxp/libltxpfork.so"),
-    ]
-    .into_iter()
-    .find(|p| p.exists())
+    [dir.join(NATIVE), dir.join("../lib/ltxp").join(NATIVE)]
+        .into_iter()
+        .find(|p| p.exists())
 }
 
 /// Write end of the self-pipe the signal handler pokes.
@@ -137,8 +142,11 @@ extern "C" fn on_signal(_: libc::c_int) {
 /// Turns SIGTERM, SIGHUP and SIGINT into `Msg::Quit` so TeX processes are always killed.
 fn handle_signals(tx: Sender<Msg>) {
     let mut fds = [0; 2];
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
         return;
+    }
+    for fd in fds {
+        unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
     }
     SIGNAL_FD.store(fds[1], std::sync::atomic::Ordering::Relaxed);
     for s in [libc::SIGTERM, libc::SIGHUP, libc::SIGINT] {
@@ -162,7 +170,6 @@ struct Project {
     partial: Option<Pdf>,
     auto_reruns: u32,
     diagnosed: HashSet<PathBuf>,
-    watcher: Option<watch::Watcher>,
     /// content hash of each watched file as last seen on disk
     disk_hash: HashMap<PathBuf, u64>,
     /// last seen disk text of TeX inputs, to find the first changed line
@@ -250,7 +257,7 @@ impl Server {
                 }
             }
             Msg::Click(v) => self.on_click(&v),
-            Msg::Fs(wd, name, is_dir) => self.on_fs(wd, &name, is_dir),
+            Msg::Fs(path) => self.on_fs(path),
             Msg::Tick => self.gc_runs(),
             Msg::Watchdog(g) => {
                 if let Some(p) = &mut self.project {
@@ -308,6 +315,7 @@ impl Server {
         if let Err(e) = std::fs::DirBuilder::new().mode(0o700).create(&run_dir) {
             return log(&format!("cannot create {}: {e}", run_dir.display()));
         }
+        let run_dir = std::fs::canonicalize(&run_dir).unwrap_or(run_dir);
         let engine = match Engine::new(
             main_tex.clone(),
             run_dir.clone(),
@@ -322,7 +330,7 @@ impl Server {
             listener.local_addr().map_or(0, |a| a.port())
         );
         http::serve(listener, run_dir.clone(), self.tx.clone());
-        let watcher = watch::Watcher::new(&root, self.tx.clone());
+        watch::spawn(root.clone(), watched, self.tx.clone());
         let mut p = Project {
             main_tex,
             root,
@@ -333,7 +341,6 @@ impl Server {
             partial: None,
             auto_reruns: 0,
             diagnosed: HashSet::new(),
-            watcher,
             disk_hash: HashMap::new(),
             disk_text: HashMap::new(),
         };
@@ -350,7 +357,12 @@ impl Server {
                 json!({ "uri": url, "external": true }),
             );
         } else {
-            let _ = Command::new("xdg-open")
+            let opener = if cfg!(target_os = "macos") {
+                "open"
+            } else {
+                "xdg-open"
+            };
+            let _ = Command::new(opener)
                 .arg(&url)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -547,19 +559,9 @@ impl Server {
     }
 
     /// A file in the project directory was written by something other than the editor.
-    fn on_fs(&mut self, wd: i32, name: &std::ffi::OsStr, is_dir: bool) {
+    fn on_fs(&mut self, path: PathBuf) {
         let Some(p) = &mut self.project else { return };
-        let Some(path) = p.watcher.as_ref().and_then(|w| w.path(wd, name)) else {
-            return;
-        };
-        if is_dir {
-            return p.watcher.iter_mut().for_each(|w| w.add_new(&path));
-        }
-        let n = name.to_string_lossy();
-        let ext_ok = path
-            .extension()
-            .is_some_and(|e| WATCHED_EXTS.iter().any(|w| e.eq_ignore_ascii_case(w)));
-        if n.starts_with('.') || n.ends_with('~') || !ext_ok || self.docs.contains_key(&path) {
+        if self.docs.contains_key(&path) {
             return;
         }
         let Ok(bytes) = std::fs::read(&path) else {
@@ -677,6 +679,15 @@ impl Server {
         }
         std::process::exit(0);
     }
+}
+
+/// Files whose change on disk recompiles: watched extensions, not editor backups.
+fn watched(path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let ext_ok = path
+        .extension()
+        .is_some_and(|e| WATCHED_EXTS.iter().any(|w| e.eq_ignore_ascii_case(w)));
+    ext_ok && !name.ends_with('~')
 }
 
 fn read_text(docs: &HashMap<PathBuf, String>, file: &Path) -> Option<String> {

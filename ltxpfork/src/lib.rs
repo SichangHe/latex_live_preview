@@ -20,12 +20,20 @@ unsafe extern "C" {
 }
 
 const MAX_FD: c_int = 256;
-/// TeX runs with `-output-directory=/proc/self/fd/200`, so each process's output directory is
-/// whatever its own fd 200 refers to.
-const OUT_DIR_FD: c_int = 200;
 
-/// Writable regular files open at the last recording fork: (fd, name, write offset).
-static mut RECORDED: Vec<(c_int, CString, libc::off_t)> = Vec::new();
+/// A writable output file open at the last recording fork.
+struct Output {
+    fd: c_int,
+    /// base name; TeX writes its outputs into its working directory
+    name: CString,
+    /// bytes written before the fork
+    len: libc::off_t,
+    /// read-only handle opened before the fork, so the prefix stays readable even after the
+    /// parent renames (`main.synctex(busy)`) or deletes the file
+    read_fd: c_int,
+}
+
+static mut RECORDED: Vec<Output> = Vec::new();
 
 unsafe fn push_str(l: *mut lua_State, s: &[u8]) {
     let c = CString::new(s).unwrap_or_default();
@@ -36,12 +44,23 @@ unsafe fn arg_str<'a>(l: *mut lua_State, i: c_int) -> &'a CStr {
     unsafe { CStr::from_ptr(luaL_checklstring(l, i, std::ptr::null_mut())) }
 }
 
-fn fd_link(fd: c_int) -> CString {
-    CString::new(format!("/proc/self/fd/{fd}")).expect("no NUL in fd path")
+#[cfg(target_os = "linux")]
+fn fd_path(fd: c_int) -> Option<CString> {
+    let p = std::fs::read_link(format!("/proc/self/fd/{fd}")).ok()?;
+    CString::new(p.into_os_string().into_encoded_bytes()).ok()
 }
 
-/// Writable regular-file fds with their base names and offsets.
-unsafe fn record_outputs() -> Vec<(c_int, CString, libc::off_t)> {
+#[cfg(target_os = "macos")]
+fn fd_path(fd: c_int) -> Option<CString> {
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    if unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } < 0 {
+        return None;
+    }
+    Some(CStr::from_bytes_until_nul(&buf).ok()?.to_owned())
+}
+
+/// Writable regular-file fds with names, offsets and read handles.
+unsafe fn record_outputs() -> Vec<Output> {
     let mut out = Vec::new();
     for fd in 3..MAX_FD {
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
@@ -51,30 +70,50 @@ unsafe fn record_outputs() -> Vec<(c_int, CString, libc::off_t)> {
         if unsafe { libc::fcntl(fd, libc::F_GETFL) } & libc::O_ACCMODE == libc::O_RDONLY {
             continue;
         }
-        let Ok(path) = std::fs::read_link(format!("/proc/self/fd/{fd}")) else {
+        let Some(path) = fd_path(fd) else { continue };
+        let bytes = path.as_bytes();
+        let base = &bytes[bytes.iter().rposition(|&b| b == b'/').map_or(0, |i| i + 1)..];
+        let Ok(name) = CString::new(base) else {
             continue;
         };
-        let Some(name) = path.file_name() else {
+        let read_fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+        if read_fd < 0 {
             continue;
-        };
-        let Ok(name) = CString::new(name.as_encoded_bytes()) else {
-            continue;
-        };
-        out.push((fd, name, unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) }));
+        }
+        let len = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) };
+        out.push(Output {
+            fd,
+            name,
+            len,
+            read_fd,
+        });
     }
     out
 }
 
-/// `fork(record)`: flushes stdio and forks. With `record`, first records writable outputs for a
-/// later `detach`; a clone of a parked snapshot passes false to keep the snapshot's record.
-/// Returns the child pid in the parent, 0 in the child, nil on failure.
+/// Drops the record, closing its read handles.
+unsafe fn clear_record() {
+    for o in unsafe { std::mem::take(&mut *std::ptr::addr_of_mut!(RECORDED)) } {
+        unsafe { libc::close(o.read_fd) };
+    }
+}
+
+/// `fork(record)`: flushes stdio and forks. With `record`, the child gets a fresh record of the
+/// writable outputs for a later `detach`; a clone of a parked snapshot passes false to keep
+/// the snapshot's record. Returns the child pid in the parent, 0 in the child, nil on failure.
 unsafe extern "C" fn l_fork(l: *mut lua_State) -> c_int {
     unsafe {
         libc::fflush(std::ptr::null_mut());
-        if lua_toboolean(l, 1) != 0 {
+        let record = lua_toboolean(l, 1) != 0;
+        if record {
+            clear_record();
             RECORDED = record_outputs();
         }
-        match libc::fork() {
+        let pid = libc::fork();
+        if pid != 0 && record {
+            clear_record();
+        }
+        match pid {
             pid if pid < 0 => lua_pushnil(l),
             pid => lua_pushinteger(l, pid.into()),
         }
@@ -82,38 +121,46 @@ unsafe extern "C" fn l_fork(l: *mut lua_State) -> c_int {
     1
 }
 
-/// `detach(dir)`: points fd `OUT_DIR_FD` at `dir` and gives every recorded output its own copy
-/// there holding the bytes written before the fork, so processes never share output. Names
-/// and offsets come from fork time, and the prefix is read through /proc, because the parent
-/// may have renamed or deleted the file since. Returns nil, or the path that failed.
+/// Copies the first `len` bytes of `src` to the start of `dst`.
+unsafe fn copy_prefix(src: c_int, dst: c_int, len: libc::off_t) -> bool {
+    let mut buf = vec![0u8; 1 << 20];
+    let mut off: libc::off_t = 0;
+    while off < len {
+        let want = buf.len().min((len - off) as usize);
+        let n = unsafe { libc::pread(src, buf.as_mut_ptr().cast(), want, off) };
+        if n <= 0 || unsafe { libc::pwrite(dst, buf.as_ptr().cast(), n as usize, off) } != n {
+            return false;
+        }
+        off += n as libc::off_t;
+    }
+    true
+}
+
+/// `detach(dir)`: makes `dir` the working directory, where TeX writes its outputs, and gives
+/// every recorded output its own copy there holding the bytes written before the fork, so
+/// processes never share output. Returns nil, or the path that failed.
 unsafe extern "C" fn l_detach(l: *mut lua_State) -> c_int {
     unsafe {
         let dir = arg_str(l, 1);
-        let dfd = libc::open(dir.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY);
-        if dfd < 0 || libc::dup2(dfd, OUT_DIR_FD) < 0 {
+        if libc::chdir(dir.as_ptr()) != 0 {
             push_str(l, dir.to_bytes());
             return 1;
         }
-        libc::close(dfd);
-        for (fd, name, len) in (*std::ptr::addr_of!(RECORDED)).iter() {
-            let src = libc::open(fd_link(*fd).as_ptr(), libc::O_RDONLY);
-            let dst = libc::openat(
-                OUT_DIR_FD,
-                name.as_ptr(),
-                libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+        for o in (*std::ptr::addr_of!(RECORDED)).iter() {
+            let dst = libc::open(
+                o.name.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC | libc::O_CLOEXEC,
                 0o644,
             );
-            if src < 0 || dst < 0 {
-                push_str(l, name.to_bytes());
+            if dst < 0 || !copy_prefix(o.read_fd, dst, o.len) {
+                push_str(l, o.name.to_bytes());
                 return 1;
             }
-            let mut off: libc::off_t = 0;
-            while off < *len && libc::sendfile(dst, src, &mut off, (*len - off) as usize) > 0 {}
-            libc::close(src);
-            libc::dup2(dst, *fd);
+            libc::dup2(dst, o.fd);
             libc::close(dst);
-            libc::lseek(*fd, *len, libc::SEEK_SET);
+            libc::lseek(o.fd, o.len, libc::SEEK_SET);
         }
+        clear_record();
         lua_pushnil(l);
     }
     1

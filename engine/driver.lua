@@ -2,7 +2,7 @@
 --- Run as `\directlua{dofile(os.getenv("LTXP_DRIVER"))}`; inputs `LTXP_MAIN` when loaded.
 --- Env: `LTXP_NATIVE` libltxpfork.so, `LTXP_EVENTS` event FIFO, `LTXP_RUN` run dir,
 --- `LTXP_SHADOW` dir mirroring unsaved editor buffers by absolute path, `LTXP_GEN` generation,
---- `LTXP_OUT` its output dir.
+--- `LTXP_PROJECT` the main file's dir. TeX starts in its output dir and writes outputs there.
 local F = package.loadlib(os.getenv("LTXP_NATIVE"), "luaopen_ltxpfork")()
 local run_dir, shadow = os.getenv("LTXP_RUN"), os.getenv("LTXP_SHADOW")
 local FINISH_GAP_S = 0.15
@@ -10,6 +10,24 @@ local ev = io.open(os.getenv("LTXP_EVENTS"), "w")
 ev:setvbuf("line")
 local gen, page, start_page, last_finish_s = tonumber(os.getenv("LTXP_GEN")), 0, 0, 0
 local open_recs = {}
+
+--- Shell commands (`\write18`, `\ShellEscape`, ...) run in the project dir, as in a normal
+--- build, rather than in this process's output dir.
+local project = os.getenv("LTXP_PROJECT")
+local cd_project = "cd '" .. project:gsub("'", "'\\''") .. "' && "
+for _, f in ipairs({ "execute", "spawn", "exec" }) do
+  local orig = os[f]
+  if orig then
+    os[f] = function(cmd, ...)
+      if type(cmd) == "string" then cmd = cd_project .. cmd end
+      return orig(cmd, ...)
+    end
+  end
+end
+local orig_popen = io.popen
+io.popen = function(cmd, ...)
+  return orig_popen(type(cmd) == "string" and cd_project .. cmd or cmd, ...)
+end
 local max_read = {}
 
 local function read_lines(path)
@@ -54,7 +72,7 @@ local function encode_max_read()
 end
 
 --- What this process reports once its PDF, SyncTeX and log are closed.
-local exit_msg = "done " .. os.getenv("LTXP_OUT")
+local exit_msg = "done " .. lfs.currentdir()
 
 --- Moves this process's outputs to `dir` and makes it report `msg` when they are closed.
 local function become(dir, msg)
