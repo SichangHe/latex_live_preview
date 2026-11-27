@@ -1,7 +1,7 @@
 ;;; ltxp.el --- Instant LaTeX preview with exact two-way SyncTeX -*- lexical-binding: t -*-
 
 ;; URL: https://github.com/SichangHe/latex_live_preview
-;; Version: 0.0.4
+;; Version: 0.0.5
 ;; Package-Requires: ((emacs "29.1"))
 ;; SPDX-License-Identifier: UPL-1.0
 
