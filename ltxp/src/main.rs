@@ -90,6 +90,7 @@ fn main() {
         }
     });
     let mut srv = Server {
+        open_browser: true,
         tx,
         lsp: lsp_mode,
         native,
@@ -162,6 +163,8 @@ fn handle_signals(tx: Sender<Msg>) {
 }
 
 struct Project {
+    /// viewer address
+    url: String,
     main_tex: PathBuf,
     root: PathBuf,
     run_dir: PathBuf,
@@ -214,6 +217,9 @@ struct Server {
     project: Option<Project>,
     next_id: u64,
     reveal_seq: u64,
+    /// ask the editor to open the viewer when a project starts; clients that open it
+    /// themselves pass `initializationOptions.openBrowser = false`
+    open_browser: bool,
 }
 
 impl Server {
@@ -221,6 +227,14 @@ impl Server {
         if self.lsp {
             lsp::write(&mut std::io::stdout().lock(), v);
         }
+    }
+
+    /// `window/showMessage`; `kind` 1 is an error, 3 information. Also logged.
+    fn show_message(&mut self, kind: u8, msg: &str) {
+        log(msg);
+        self.send(
+            json!({ "method": "window/showMessage", "params": { "type": kind, "message": msg } }),
+        );
     }
 
     fn request(&mut self, method: &str, params: Value) {
@@ -333,6 +347,7 @@ impl Server {
         http::serve(listener, run_dir.clone(), self.tx.clone());
         watch::spawn(root.clone(), watched, self.tx.clone());
         let mut p = Project {
+            url: url.clone(),
             main_tex,
             root,
             run_dir,
@@ -351,12 +366,20 @@ impl Server {
         p.engine.cold(None);
         self.project = Some(p);
         log(&format!("viewer at {url}"));
-        if self.lsp {
-            self.send(json!({ "method": "window/showMessage", "params": { "type": 3, "message": format!("LaTeX preview: {url}") } }));
-            self.request(
-                "window/showDocument",
-                json!({ "uri": url, "external": true }),
+        if which("lualatex").is_none() {
+            self.show_message(
+                1,
+                "ltxp: lualatex not found in PATH; install TeX Live (MacTeX on macOS) or fix PATH",
             );
+        }
+        if self.lsp {
+            if self.open_browser {
+                self.show_message(3, &format!("ltxp preview: {url}"));
+                self.request(
+                    "window/showDocument",
+                    json!({ "uri": url, "external": true }),
+                );
+            }
         } else {
             let opener = if cfg!(target_os = "macos") {
                 "open"
@@ -612,13 +635,16 @@ impl Server {
         );
         let uri = params["textDocument"]["uri"].as_str().unwrap_or("");
         match method {
-            "initialize" => self.send(json!({ "id": id, "result": {
+            "initialize" => {
+                self.open_browser = params["initializationOptions"]["openBrowser"].as_bool().unwrap_or(true);
+                self.send(json!({ "id": id, "result": {
                 "capabilities": {
                     "textDocumentSync": { "openClose": true, "change": 2, "save": true },
-                    "executeCommandProvider": { "commands": ["ltxp.forwardSearch"] },
+                    "executeCommandProvider": { "commands": ["ltxp.forwardSearch", "ltxp.previewUrl"] },
                 },
                 "serverInfo": { "name": "ltxp", "version": env!("CARGO_PKG_VERSION") },
-            }})),
+            }}));
+            }
             "textDocument/didOpen" => {
                 let file = uri2path(uri);
                 let text = params["textDocument"]["text"].as_str().unwrap_or("").to_string();
@@ -658,11 +684,16 @@ impl Server {
             }
             "ltxp/cursor" => self.reveal(uri, &params["position"]),
             "workspace/executeCommand" => {
-                if params["command"] == "ltxp.forwardSearch" {
-                    let args = &params["arguments"];
-                    self.reveal(args[0].as_str().unwrap_or(""), &args[1]);
+                let mut result = Value::Null;
+                match params["command"].as_str() {
+                    Some("ltxp.forwardSearch") => {
+                        let args = &params["arguments"];
+                        self.reveal(args[0].as_str().unwrap_or(""), &args[1]);
+                    }
+                    Some("ltxp.previewUrl") => result = self.project.as_ref().map_or(Value::Null, |p| p.url.clone().into()),
+                    _ => {}
                 }
-                self.send(json!({ "id": id, "result": null }));
+                self.send(json!({ "id": id, "result": result }));
             }
             "shutdown" => self.send(json!({ "id": id, "result": null })),
             "exit" => self.quit(),
@@ -689,6 +720,13 @@ fn watched(path: &Path) -> bool {
         .extension()
         .is_some_and(|e| WATCHED_EXTS.iter().any(|w| e.eq_ignore_ascii_case(w)));
     ext_ok && !name.ends_with('~')
+}
+
+/// Path of executable `name` on PATH.
+fn which(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
 }
 
 fn read_text(docs: &HashMap<PathBuf, String>, file: &Path) -> Option<String> {

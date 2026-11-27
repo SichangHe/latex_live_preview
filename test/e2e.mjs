@@ -47,7 +47,11 @@ async function waitFor(fn, ms, what) {
   throw new Error(`timeout: ${what}`);
 }
 
-const url = await waitFor(() => fs.existsSync(sock) && lua("vim.g.ltxp_url"), 20000, "viewer url");
+await waitFor(() => fs.existsSync(sock) && lua("vim.bo.filetype") === "tex", 20000, "nvim up");
+await sleep(1500);
+if (lua("#vim.lsp.get_clients()") !== 0) fail("ltxp started without :LtxpPreview");
+keys(":LtxpPreview<CR>");
+const url = await waitFor(() => lua("vim.g.ltxp_url"), 20000, "viewer url");
 const browser = await chromium.launch({ executablePath: CHROME });
 const page = await browser.newPage({ viewport: { width: 1000, height: 1200 } });
 await page.goto(url);

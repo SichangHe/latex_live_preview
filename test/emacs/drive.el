@@ -3,12 +3,16 @@
 ;; command, space-separated).  Reads commands from `cmd' in the work dir and writes `status'
 ;; (`ready' once Eglot connected) and `point' (0-based line and column) there.
 (load (getenv "LTXP_PLUGIN"))
+(setq browse-url-browser-function (lambda (url &rest _) (drive-put "url" url)))
 (setq ltxp-command (split-string (getenv "LTXP_TEST_CMD")))
 (setq eglot-send-changes-idle-time 0.05)
 (ltxp-setup)
 (defvar dir (file-name-as-directory (getenv "LTXP_TEST_DIR")))
 (defun drive-put (name text) (with-temp-file (concat dir name) (insert text)))
 (find-file (concat dir "chap.tex"))
+(sleep-for 1)
+(when (eglot-current-server) (drive-put "status" "auto-started") (kill-emacs 1))
+(ltxp-preview)
 (run-hooks 'post-command-hook)
 (defvar n-done 0)
 (while t

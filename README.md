@@ -23,11 +23,11 @@ cargo build --release   # target/release/ltxp and the LuaTeX module libltxpfork.
 
 ## Use
 
-Open a `.tex` file in your editor. The preview opens in your browser, and its URL is also shown as a message. ltxp finds the main file from `\documentclass`, a `% !TEX root = main.tex` comment, or a file in the same or parent folder that has `\documentclass` and mentions the open file.
+Nothing starts when you open a file. In a `.tex` file, start the preview explicitly; it opens in your browser. ltxp finds the main file from `\documentclass`, a `% !TEX root = main.tex` comment, or a file in the same or parent folder that has `\documentclass` and mentions the open file.
 
-- Neovim: the installer keeps the plugin in `~/.local/share/ltxp/nvim` and, if your config imports lazy.nvim specs from `lua/plugins/` (as LazyVim does), adds `lua/plugins/ltxp.lua`, loaded for TeX files. Otherwise it prints the spec to add. Options: `opts = { cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 }`.
-- Emacs: uses the built-in Eglot. The installer adds a loader to your init file; by hand, `(load "/path/to/ltxp.el")` then `(ltxp-setup)`.
-- VS Code / VSCodium: the `ltxp` extension. Settings are `ltxp.path` and `ltxp.cursorDelayMs`.
+- Neovim: `:LtxpPreview` starts it (again: reopens the browser), `:LtxpStop` stops it. The installer registers the plugin with lazy.nvim, loaded only when you run one of these. Options: `opts = { cmd = { "/path/to/ltxp" }, cursor_delay_ms = 100 }`.
+- Emacs (29+, built-in Eglot): `M-x ltxp-preview`, `M-x ltxp-stop`. The installer adds a loader to your init file; by hand, `(load "/path/to/ltxp.el")` then `(ltxp-setup)`.
+- VS Code / VSCodium: the commands "ltxp: Open preview" and "ltxp: Stop preview". Settings are `ltxp.path` and `ltxp.cursorDelayMs`.
 - Other editors: run `ltxp` as a language server for LaTeX. Forward search is the command `ltxp.forwardSearch` with arguments `[uri, position]`, or the notification `ltxp/cursor`.
 - No editor: `ltxp main.tex` previews the file and recompiles whenever files change on disk, like `latexmk -pvc`. Clicks print `file:line:column`.
 

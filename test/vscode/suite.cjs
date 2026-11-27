@@ -44,6 +44,9 @@ async function run() {
   await vscode.workspace.openTextDocument(path.join(dir, "main.tex"));
   const editor = await vscode.window.showTextDocument(doc);
   assert.equal(doc.languageId, "latex");
+  await sleep(2000);
+  assert.ok(!(await get(`${BASE}/`).then(() => true, () => false)), "ltxp started without the command");
+  await vscode.commands.executeCommand("ltxp.openPreview");
   await until("viewer up", async () => {
     try {
       await get(`${BASE}/`);
