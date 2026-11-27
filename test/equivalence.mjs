@@ -193,7 +193,8 @@ else {
   send({ method: "exit" });
 }
 await sleep(1000);
-const leftover = fs.readdirSync("/dev/shm").filter((d) => d.startsWith(`ltxp-${server.pid}-`));
+const runBase = fs.existsSync("/dev/shm") ? "/dev/shm" : os.tmpdir();
+const leftover = fs.readdirSync(runBase).filter((d) => d.startsWith(`ltxp-${server.pid}-`));
 if (leftover.length) fail(`run dir left behind: ${leftover}`);
 if (!failed) console.log(`ok ${path.basename(srcDir)}`);
 process.exit(failed ? 1 : 0);

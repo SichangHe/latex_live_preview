@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install TeX and tools
+        run: |
+          brew install --cask basictex
+          brew install poppler
+          echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
+      - name: TeX packages
+        run: |
+          sudo /Library/TeX/texbin/tlmgr update --self
+          sudo /Library/TeX/texbin/tlmgr install latexmk
+      - run: cargo clippy --release --locked -- -D warnings
+      - run: cargo build --release --locked
+      - name: equivalence (editor and disk edits)
+        run: |
+          cd test
+          node equivalence.mjs multifile main.tex chap.tex
+          LTXP_TEST_DISK=1 node equivalence.mjs multifile main.tex chap.tex
+      - name: logs on failure
+        if: failure()
+        run: tail -n 40 "${TMPDIR:-/tmp}"/ltxp-eq-*/ltxp.err || true
