@@ -9,21 +9,22 @@ jobs:
     strategy:
       matrix:
         include:
-          - { platform: x86_64-linux, os: ubuntu-22.04 }
-          - { platform: aarch64-linux, os: ubuntu-22.04-arm }
-          - { platform: aarch64-macos, os: macos-14 }
-          - { platform: x86_64-macos, os: macos-13 }
+          - { platform: x86_64-linux, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { platform: aarch64-linux, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { platform: aarch64-macos, os: macos-latest, target: aarch64-apple-darwin }
+          - { platform: x86_64-macos, os: macos-latest, target: x86_64-apple-darwin }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: tag matches crate version
         run: test "${GITHUB_REF_NAME#v}" = "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)"
-      - run: cargo clippy --release --locked -- -D warnings
-      - run: cargo build --release --locked
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo clippy --release --locked --target ${{ matrix.target }} -- -D warnings
+      - run: cargo build --release --locked --target ${{ matrix.target }}
       - name: package
         run: |
           mkdir -p dist/pkg/emacs
-          cp target/release/ltxp target/release/libltxpfork.* dist/pkg/
+          cp target/${{ matrix.target }}/release/ltxp target/${{ matrix.target }}/release/libltxpfork.* dist/pkg/
           rm -f dist/pkg/libltxpfork.d dist/pkg/libltxpfork.rlib
           cp -R editors/nvim dist/pkg/nvim
           cp editors/emacs/ltxp.el dist/pkg/emacs/
