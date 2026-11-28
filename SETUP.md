@@ -14,7 +14,8 @@ If a user pointed you here to set this up for them:
 - Ask the user before installing system packages (step 1), and before changing their editor configuration (the `--editor` options in steps 2 and 5).
 - Ask which editor they use, and whether they need collaboration (step 5) at all.
 - Supported: Linux (x86_64, ARM64) and macOS (Apple Silicon, Intel). Windows is not supported; use WSL.
-- Everything installs under `~/.local`; `ltxp uninstall` removes ltxp again.
+- Everything installs under `~/.local`; `ltxp uninstall --yes` removes ltxp again.
+- On a machine without a browser, check the preview with `ltxp main.tex` and `curl -sN http://127.0.0.1:PORT/events`, using the port in the `viewer at` line it prints (or set `LTXP_PORT`). A line containing `"kind":"done"` means a PDF was made.
 
 ## 1. Install TeX Live
 
@@ -29,7 +30,7 @@ ltxp compiles with LuaLaTeX from a local TeX Live.
 - **Debian/Ubuntu**: `sudo apt install texlive-full` (everything, ~5 GB), or `sudo apt install texlive-latex-extra texlive-luatex texlive-bibtex-extra biber latexmk` for a smaller set.
 - **Other Linux**: your distribution's TeX Live packages, or the [TeX Live installer](https://www.tug.org/texlive/quickinstall.html).
 
-**Check**: `lualatex --version` and `synctex help` both print something.
+**Check**: `lualatex --version`, `synctex help` and `latexmk --version` each print something.
 
 ## 2. Install ltxp
 
@@ -37,9 +38,9 @@ ltxp compiles with LuaLaTeX from a local TeX Live.
 curl -fsSL https://raw.githubusercontent.com/SichangHe/latex_live_preview/main/install.sh | sh
 ```
 
-In a terminal, it asks which editors to set up. To choose without the question, replace the final `sh` with `sh -s -- --editor nvim` (or `code`, `codium`, `emacs`; repeat `--editor` for several, or `--no-editor`). It prints what it set up and what to do next.
+In a terminal, it asks which editors to set up. To choose without the question, replace the final `sh` with `sh -s -- --editor nvim` (or `--editor code`, `--editor codium`, `--editor emacs`; repeat `--editor` for several). For no editor setup, use `sh -s -- --no-editor`. It prints what it set up and what to do next.
 
-If it says `~/.local/bin` is not on your PATH, add this to your shell's startup file (`~/.zshrc` or `~/.bashrc`), then open a new terminal:
+If it says `~/.local/bin is not in your PATH`, run this line now, and add it to your shell's startup file (`~/.zshrc` or `~/.bashrc`) for future terminals:
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
@@ -57,10 +58,10 @@ Open any `.tex` file of your project in your editor, then start the preview. Not
 - **Neovim**: `:LtxpPreview` starts it; `:LtxpStop`, `:LtxpLog` (LaTeX log), `:LtxpSync` (toggle following the cursor)
 - **VS Code / VSCodium**: command "ltxp: Open preview"; also "Stop preview", "Open LaTeX log", "Toggle preview following the cursor"
 - **Emacs**: `M-x ltxp-preview`; `M-x ltxp-stop`, `M-x ltxp-log`, `M-x ltxp-toggle-sync`
-- **No editor**: `ltxp main.tex` (Ctrl-C stops it)
+- **No editor**: `ltxp main.tex` runs in the foreground until Ctrl-C. It opens your browser and prints the preview URL (`viewer at http://...`). It recompiles whenever you save a file in the project.
 
 Your browser opens the PDF. Then:
-- Type: the PDF updates without saving.
+- Type: the PDF updates without saving (in no-editor mode, when you save).
 - Click a word in the PDF: your cursor jumps to that exact character in the source.
 - Move your cursor: the PDF marks the same spot.
 - LaTeX errors show at the top of the PDF and in your editor.
@@ -70,13 +71,13 @@ ltxp finds the main file when you open a sub-file (such as `sections/intro.tex`)
 % !TEX root = ../main.tex
 ```
 
-Over SSH: start your editor with `LTXP_PORT=8765`, forward the port with `ssh -L 8765:127.0.0.1:8765 HOST`, and open `http://127.0.0.1:8765/` on your own machine.
+The preview port is random unless you set `LTXP_PORT`. Over SSH: start your editor (or `ltxp main.tex`) with `LTXP_PORT=8765`, forward the port with `ssh -L 8765:127.0.0.1:8765 HOST`, and open `http://127.0.0.1:8765/` on your own machine.
 
 **Check**: the browser shows your PDF, and a typed word appears in it within a second.
 
 ## 4. Final PDFs and moving from Overleaf
 
-ltxp is for previewing as you write. For the PDF you submit, build with latexmk in the project folder:
+ltxp is for previewing as you write; it compiles in a temporary folder and does not write `main.pdf` into your project. For the PDF you submit, build with latexmk in the project folder:
 ```sh
 latexmk -lualatex main.tex   # same engine as the preview
 latexmk -pdf main.tex        # pdfLaTeX, if your venue requires it
@@ -119,5 +120,5 @@ Details: [TeamTypeV getting started](https://github.com/SichangHe/TeamTypeV/blob
 - Preview blank, or "no PDF": read the error at the top of the preview, or open the LaTeX log (step 3).
 - "lualatex not found": TeX Live is not on the PATH your editor sees. Start the editor from a terminal where `lualatex --version` works.
 - No browser opened: the preview URL is shown as a message (in Neovim, `:messages`).
-- Remove ltxp: `ltxp uninstall` lists everything the installer set up and removes it after asking.
+- Remove ltxp: `ltxp uninstall` lists everything the installer set up and removes it after asking (`--yes` skips the question).
 - Bugs: [ltxp issues](https://github.com/SichangHe/latex_live_preview/issues), [TeamTypeV issues](https://github.com/SichangHe/TeamTypeV/issues).
