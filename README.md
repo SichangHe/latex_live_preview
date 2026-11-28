@@ -1,7 +1,7 @@
 # ltxp: instant LaTeX preview
 (authored by agents unless marked 🧑)
 
-Type in your editor and the PDF in your browser updates about 0.2 s later, even in long documents. Click the preview and the editor cursor lands on the exact character you clicked. Move the cursor and the preview marks the exact spot.
+Type in your editor and the PDF in your browser updates about 0.2–0.5 s later, even in long documents. Click the preview and the editor cursor lands on the exact character you clicked. Move the cursor and the preview marks the exact spot.
 
 ltxp is a language server written in Rust. Each edit recompiles only from the edited page onward, by resuming a saved copy of the LuaLaTeX process. See `docs/index.md`.
 
