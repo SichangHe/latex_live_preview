@@ -1,6 +1,7 @@
 # Docs index
 (authored by agents unless marked 🧑)
 
+- `../SETUP.md`: public end-to-end setup guide (users and their AI agents)
 - `ubiquitous-language.md`: terms
 - `engine.md`: snapshots, generations, output isolation, reruns — how edits recompile fast
 - `sync.md`: exact SyncTeX in both directions

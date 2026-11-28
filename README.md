@@ -3,6 +3,8 @@
 
 Type in your editor and the PDF in your browser updates about 0.2–0.5 s later, even in long documents. Click the preview and the editor cursor lands on the exact character you clicked. Move the cursor and the preview marks the exact spot.
 
+**New here? Follow [SETUP.md](SETUP.md)**: TeX Live, ltxp, your editor, final PDFs, moving from Overleaf, and real-time collaboration with [TeamTypeV](https://github.com/SichangHe/TeamTypeV). You can also point an AI agent at it: `https://raw.githubusercontent.com/SichangHe/latex_live_preview/main/SETUP.md`.
+
 ltxp is a language server written in Rust. Each edit recompiles only from the edited page onward, by resuming a saved copy of the LuaLaTeX process. See `docs/index.md`.
 
 ## Install
