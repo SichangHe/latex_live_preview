@@ -22,9 +22,14 @@ driver
 - `open_read_file`: reads whole files into memory (shadow copy first), serves lines
     - records max-read per file
     - resumed clones reload the content of still-open files and continue at the same line
-- `finish_pdfpage`: after each page
-    - fork a snapshot, which parks
-    - fork a finisher if ≥ `FINISH_GAP_S` since the last one
+- snapshots are forked at three kinds of points, keyed (pages shipped, paragraphs since)
+    - `begindocument/end` hook: key (0, 0), so page-1 edits skip the preamble
+    - `buildpage_filter` with `hmode_par` (a paragraph joined the page): only if ≥ `PAR_SNAP_GAP_S` (50 ms) since the last snapshot, so an edit mid-page resumes near it
+        - e.g. ACM sample page 1 typesets in ~390 ms, mostly loading fonts on first use; paragraph snapshots skip that
+    - `finish_pdfpage`: after each page
+- `finish_pdfpage` also fires for form XObjects (`shippingout` false: embedded PDF figures, saved boxes); those are ignored, so page counts match PDF pages
+    - counting them made `first_changed` point past the edited page; the viewer then kept that page stale until a later full run
+- fork a finisher after a page if ≥ `FINISH_GAP_S` since the last one
 - finisher ends at the next `buildpage_filter` via `tex.finish`
     - calling it inside `finish_pdfpage` drops the page just shipped
 - `wrapup_run`: outputs are closed; emit `done`/`partial` then `_exit`, skipping ~30 ms teardown
@@ -44,7 +49,8 @@ server-side engine
     - none: cold gen
 - cold gens keep existing snapshots until their own replace them page by page
 - only events of the current gen count; older gens' snapshots are told to quit
-- snapshots ~5 MB each: above `LTXP_MAX_SNAPS` (400) keep only pages divisible by a doubling stride
+- snapshots ~5 MB each: above `LTXP_MAX_SNAPS` (400) drop paragraph snapshots and keep page ends of pages divisible by a doubling stride
+- latency check: `test/latency.mjs DIR MAIN EDIT LINE [N]` types keys through the real server (`LTXP_VIEWER=1`: until the browser shows them; `LTXP_DEBUG=1`: timestamped engine events)
 
 server (`ltxp/src/main.rs`): one actor thread owns all state
 - stdin (LSP), event FIFO, HTTP connections, timers, SyncTeX workers send it `Msg`s

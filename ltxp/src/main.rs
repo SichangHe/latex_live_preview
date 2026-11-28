@@ -266,6 +266,15 @@ impl Server {
             Msg::Lsp(v) => self.on_lsp(v),
             Msg::Quit => self.quit(),
             Msg::Ev(line) => {
+                if std::env::var_os("LTXP_DEBUG").is_some() {
+                    let ms = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_millis() % 100_000);
+                    log(&format!(
+                        "{ms} ev {}",
+                        line.chars().take(60).collect::<String>()
+                    ));
+                }
                 let Some(p) = &mut self.project else { return };
                 let pdf = p.engine.on_event(&line);
                 for f in p.engine.take_new_inputs() {

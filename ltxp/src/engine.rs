@@ -34,6 +34,9 @@ pub struct Pdf {
     pub seed: u64,
 }
 
+/// Snapshot position: pages shipped, then paragraphs since (0 = right at the page end).
+type SnapKey = (u64, u64);
+
 struct Snap {
     pid: i32,
     max_read: HashMap<PathBuf, usize>,
@@ -45,8 +48,9 @@ pub struct Engine {
     run_dir: PathBuf,
     native: PathBuf,
     tx: Sender<Msg>,
-    snaps: BTreeMap<u64, Snap>,
-    /// each parked snapshot costs ~5 MB; beyond `max_snaps`, keep pages divisible by `stride`
+    snaps: BTreeMap<SnapKey, Snap>,
+    /// each parked snapshot costs ~5 MB; beyond `max_snaps`, keep only page snapshots of pages
+    /// divisible by `stride`
     max_snaps: usize,
     stride: u64,
     generation: u64,
@@ -59,7 +63,7 @@ pub struct Engine {
     /// process groups of cold gens; every snapshot, clone and finisher is inside one
     groups: Vec<i32>,
     /// resumed generation and its snapshot page, until the clone reports
-    awaiting: Option<(u64, u64)>,
+    awaiting: Option<(u64, SnapKey)>,
     /// canonical path of each raw path TeX reported
     canonical: HashMap<String, PathBuf>,
     new_inputs: Vec<PathBuf>,
@@ -158,6 +162,12 @@ impl Engine {
         std::mem::take(&mut self.new_inputs)
     }
 
+    /// Whether snapshot `key` survives thinning: all while under the cap, then only snapshots at
+    /// page ends of pages divisible by `stride`.
+    fn keeps(&self, (page, sub): SnapKey) -> bool {
+        self.stride == 1 || (sub == 0 && page % self.stride == 0)
+    }
+
     fn tell_snap(&self, pid: i32, cmd: &str) {
         let fifo = self.run_dir.join(format!("snap-{pid}"));
         if let Ok(mut f) = fs::OpenOptions::new()
@@ -172,8 +182,8 @@ impl Engine {
         }
     }
 
-    fn drop_snap(&mut self, page: u64) {
-        if let Some(s) = self.snaps.remove(&page) {
+    fn drop_snap(&mut self, key: SnapKey) {
+        if let Some(s) = self.snaps.remove(&key) {
             self.tell_snap(s.pid, "quit");
         }
     }
@@ -272,7 +282,7 @@ impl Engine {
     /// Recompiles after `file` changed from 1-based `line` on: resumes the latest snapshot that
     /// has not read that line; snapshots that have are dropped.
     pub fn edit(&mut self, file: &Path, line: usize) {
-        let stale: Vec<u64> = self
+        let stale: Vec<SnapKey> = self
             .snaps
             .iter()
             .filter(|(_, s)| s.max_read.get(file).is_some_and(|&n| n >= line))
@@ -290,7 +300,7 @@ impl Engine {
         };
         self.kill_running();
         self.generation += 1;
-        self.mark_changed(best + 1);
+        self.mark_changed(best.0 + 1);
         let snap = &self.snaps[&best];
         let seed = self.seed_of.get(&snap.generation).copied().unwrap_or(0);
         self.seed_of.insert(self.generation, seed);
@@ -303,20 +313,21 @@ impl Engine {
             let _ = tx.send(Msg::Watchdog(generation));
         });
         crate::log(&format!(
-            "gen {}: resume after page {best}",
-            self.generation
+            "gen {}: resume after page {} (+{} paragraphs)",
+            self.generation, best.0, best.1
         ));
     }
 
     pub fn on_watchdog(&mut self, generation: u64) {
-        if let Some((g, page)) = self.awaiting
+        if let Some((g, key)) = self.awaiting
             && g == generation
             && self.generation == generation
         {
             crate::log(&format!(
-                "gen {generation}: snapshot of page {page} did not resume; cold start"
+                "gen {generation}: snapshot after page {} did not resume; cold start",
+                key.0
             ));
-            self.snaps.remove(&page);
+            self.snaps.remove(&key);
             self.cold(None);
         }
     }
@@ -380,16 +391,18 @@ impl Engine {
         };
         match kind {
             "snap" => {
-                let (page, pid) = (
+                let (page, sub, pid) = (
+                    args.next()?.parse::<u64>().ok()?,
                     args.next()?.parse::<u64>().ok()?,
                     args.next()?.parse::<i32>().ok()?,
                 );
-                if page % self.stride != 0 {
+                let key = (page, sub);
+                if !self.keeps(key) {
                     self.tell_snap(pid, "quit");
                     return None;
                 }
-                self.drop_snap(page);
-                let mr = rest.splitn(3, ' ').nth(2).unwrap_or("");
+                self.drop_snap(key);
+                let mr = rest.splitn(4, ' ').nth(3).unwrap_or("");
                 let max_read: HashMap<PathBuf, usize> = mr
                     .split('\t')
                     .filter_map(|kv| kv.rsplit_once(':'))
@@ -400,7 +413,7 @@ impl Engine {
                     .filter(|(f, _)| !f.starts_with(&self.run_dir))
                     .collect();
                 self.snaps.insert(
-                    page,
+                    key,
                     Snap {
                         pid,
                         max_read,
@@ -409,10 +422,10 @@ impl Engine {
                 );
                 if self.snaps.len() > self.max_snaps {
                     self.stride *= 2;
-                    let odd: Vec<u64> = self
+                    let odd: Vec<SnapKey> = self
                         .snaps
                         .keys()
-                        .filter(|p| *p % self.stride != 0)
+                        .filter(|k| !self.keeps(**k))
                         .copied()
                         .collect();
                     odd.into_iter().for_each(|p| self.drop_snap(p));

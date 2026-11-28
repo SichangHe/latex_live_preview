@@ -9,6 +9,10 @@ local FINISH_GAP_S = 0.15
 local ev = io.open(os.getenv("LTXP_EVENTS"), "w")
 ev:setvbuf("line")
 local gen, page, start_page, last_finish_s = tonumber(os.getenv("LTXP_GEN")), 0, 0, 0
+--- Paragraph snapshots since the last page end, and when the last snapshot was taken.
+local sub, last_snap_s = 0, 0
+--- Least time between paragraph snapshots, so a full compile forks only a few per page.
+local PAR_SNAP_GAP_S = 0.05
 local open_recs = {}
 
 --- Shell commands (`\write18`, `\ShellEscape`, ...) run in the project dir, as in a normal
@@ -116,7 +120,7 @@ end
 --- copy it page by page.
 local function park()
   local fd = F.mkfifo(run_dir .. "/snap-" .. F.getpid())
-  emit("snap", page, F.getpid(), encode_max_read())
+  emit("snap", page, sub, F.getpid(), encode_max_read())
   while true do
     local cmd = F.readline(fd)
     local new_gen = cmd:match("^go (%d+)$")
@@ -145,18 +149,35 @@ local function finish_early()
   finishing = true
 end
 
-luatexbase.add_to_callback("buildpage_filter", function()
+--- Takes a snapshot if the last one is at least `PAR_SNAP_GAP_S` old. Called between
+--- paragraphs and at page ends, where TeX can resume with the rest of the source changed.
+local function maybe_snapshot(at_page_end)
+  local now = os.gettimeofday()
+  if not at_page_end and now - last_snap_s < PAR_SNAP_GAP_S then return end
+  last_snap_s = now
+  sub = at_page_end and 0 or sub + 1
+  F.reap()
+  if F.fork(true) == 0 then park() end
+end
+
+luatexbase.add_to_callback("buildpage_filter", function(info)
   if finishing then tex.finish() end
+  -- A paragraph just went onto the page being built.
+  if info == "hmode_par" and not finishing then maybe_snapshot(false) end
 end, "ltxp.buildpage_filter")
 
+--- Snapshot "page 0", taken once the preamble is done (LaTeX's `begindocument/end` hook), so
+--- edits on page 1 skip the preamble, which is most of the work for short documents.
+function ltxp_snapshot_begin_document()
+  if page == 0 and start_page == 0 then maybe_snapshot(true) end
+end
+
 luatexbase.add_to_callback("finish_pdfpage", function(shipping)
+  -- Also called for form XObjects (embedded PDF figures, saved boxes); only pages count.
+  if not shipping then return shipping end
   page = page + 1
   if page == start_page + 2 then collectgarbage("restart") end
-  F.reap()
-  if F.fork(true) == 0 then
-    park()
-    return shipping
-  end
+  maybe_snapshot(true)
   local now = os.gettimeofday()
   if page > start_page and now - last_finish_s >= FINISH_GAP_S then
     last_finish_s = now
@@ -181,6 +202,7 @@ end, "ltxp.wrapup_run")
 tex.sprint("\\expandafter\\def\\csname input@path\\endcsname{{")
 tex.sprint(-2, project .. "/")
 tex.sprint("}}")
+tex.sprint("\\AddToHook{begindocument/end}{\\directlua{ltxp_snapshot_begin_document()}}")
 tex.sprint("\\input{")
 tex.sprint(-2, os.getenv("LTXP_MAIN"))
 tex.sprint("}")
